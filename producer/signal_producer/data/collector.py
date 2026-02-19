@@ -16,8 +16,8 @@ from ..strategies.weather.open_meteo import OpenMeteoClient, EnsembleForecast
 
 logger = structlog.get_logger()
 
-# Default storage location
-DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "data" / "ensemble_forecasts"
+# Default storage location (4 parent dirs from producer/signal_producer/data/collector.py to repo root)
+DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "ensemble_forecasts"
 
 
 @dataclass
@@ -32,6 +32,8 @@ class StoredForecast:
     std: float
     min_temp: float
     max_temp: float
+    # Complete raw API response - no data discarded
+    raw_response: dict | None = None
 
     @classmethod
     def from_ensemble(cls, forecast: EnsembleForecast, forecast_date: date) -> "StoredForecast":
@@ -45,6 +47,7 @@ class StoredForecast:
             std=forecast.std,
             min_temp=forecast.min,
             max_temp=forecast.max,
+            raw_response=forecast.raw_response,
         )
 
 

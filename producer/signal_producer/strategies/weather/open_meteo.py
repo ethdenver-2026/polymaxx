@@ -11,11 +11,13 @@ HISTORICAL_FORECAST_API_URL = "https://historical-forecast-api.open-meteo.com/v1
 
 @dataclass
 class EnsembleForecast:
-    """Ensemble forecast result with 31 member daily highs."""
+    """Ensemble forecast result with 31 member daily highs and full raw API response."""
 
     city: str
     target_date: date
     member_highs: list[float]  # 31 values (control + 30 members)
+    # Complete raw API response - no data discarded
+    raw_response: dict | None = None
 
     @property
     def mean(self) -> float:
@@ -114,6 +116,7 @@ class OpenMeteoClient:
             city=city,
             target_date=target_date,
             member_highs=member_highs,
+            raw_response=data,  # Keep entire API response
         )
 
     async def get_historical_forecast(

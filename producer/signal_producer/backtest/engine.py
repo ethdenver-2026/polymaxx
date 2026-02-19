@@ -240,10 +240,10 @@ class BacktestEngine:
     ) -> float:
         """Calculate model probability for a bucket."""
         count = sum(
-            1 for temp in ensemble.member_highs
+            1 for temp in ensemble.member_temps
             if self._bucket_contains_temp(bucket, temp)
         )
-        return count / len(ensemble.member_highs)
+        return count / len(ensemble.member_temps)
 
     async def run_single_day(
         self,
