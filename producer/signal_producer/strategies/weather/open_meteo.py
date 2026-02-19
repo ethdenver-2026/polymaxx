@@ -76,8 +76,20 @@ class OpenMeteoClient:
             "latitude": lat,
             "longitude": lon,
             "models": "gfs_seamless",
-            "hourly": "temperature_2m",
+            # Collect all potentially useful weather variables
+            "hourly": ",".join([
+                "temperature_2m",
+                "apparent_temperature",
+                "precipitation",
+                "rain",
+                "snowfall",
+                "wind_speed_10m",
+                "relative_humidity_2m",
+                "cloud_cover",
+            ]),
             "temperature_unit": "fahrenheit",
+            "precipitation_unit": "inch",
+            "wind_speed_unit": "mph",
             "timezone": timezone,
             "forecast_days": max(days_out, 1),
         }
