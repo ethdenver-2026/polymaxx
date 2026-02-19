@@ -1,0 +1,68 @@
+[project]
+name = "prediction-market-bot"
+version = "0.1.0"
+description = "Polymarket weather prediction trading bot"
+requires-python = ">=3.12"
+dependencies = [
+    # HTTP client
+    "httpx[http2]>=0.28.0",
+
+    # Validation
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.10.0",
+
+    # LLM (Venice.ai uses OpenAI-compatible API)
+    "openai>=1.50.0",
+
+    # Database
+    "sqlalchemy>=2.0.40",
+
+    # Logging
+    "structlog>=25.0.0",
+
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "tenacity>=8.2.0",
+
+    # CLI
+    "typer>=0.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+]
+live = [
+    # Only needed for live trading
+    "py-clob-client>=0.34.5",
+]
+backtest = [
+    # Only needed for backtesting with GRIB files
+    "cfgrib>=0.9.10",
+    "xarray>=2024.1.0",
+]
+
+[project.scripts]
+polymarket-bot = "src.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests as integration tests (require network)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
