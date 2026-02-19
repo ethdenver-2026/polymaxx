@@ -1,0 +1,8 @@
+city,target_date,bucket,forecast_temp,actual_temp,model_prob,market_price,edge,position_usd,won,pnl
+nyc,2026-02-11,Will the highest temperature in New York City be 33°F or below on February 11?,33.24345184326176,41.0,1.0,0.004,0.996,5.0,False,-5.0
+nyc,2026-02-15,Will the highest temperature in New York City be between 36-37°F on February 15?,38.17657533707161,39.0,0.2903225806451613,0.07,0.2203225806451613,2.9613250086715226,False,-2.9613250086715226
+nyc,2026-02-15,Will the highest temperature in New York City be between 38-39°F on February 15?,38.17657533707161,39.0,0.7096774193548387,0.38,0.32967741935483874,5.0,True,8.157894736842106
+nyc,2026-02-16,Will the highest temperature in New York City be between 36-37°F on February 16?,37.479818863407296,39.0,0.8064516129032258,0.14,0.6664516129032257,5.0,False,-5.0
+nyc,2026-02-17,Will the highest temperature in New York City be 41°F or below on February 17?,36.503917511970805,47.0,1.0,0.0895,0.9105,5.0,False,-5.0
+nyc,2026-02-18,Will the highest temperature in New York City be between 40-41°F on February 18?,41.96840903005297,39.0,0.5483870967741935,0.395,0.1533870967741935,3.1691548920287906,False,-3.1691548920287906
+nyc,2026-02-18,Will the highest temperature in New York City be between 42-43°F on February 18?,41.96840903005297,39.0,0.45161290322580644,0.295,0.15661290322580645,2.7768245252802566,False,-2.7768245252802566

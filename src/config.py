@@ -130,10 +130,63 @@ CITIES: dict[str, CityConfig] = {
         tz="Asia/Seoul",
         station="RKSS",
     ),
+    # New cities added Feb 2026
+    "paris": CityConfig(
+        name="Paris",
+        slug="paris",
+        lat=48.8566,
+        lon=2.3522,
+        tz="Europe/Paris",
+        station="LFPG",  # Charles de Gaulle
+    ),
+    "toronto": CityConfig(
+        name="Toronto",
+        slug="toronto",
+        lat=43.6532,
+        lon=-79.3832,
+        tz="America/Toronto",
+        station="CYYZ",  # Pearson
+    ),
+    "sao_paulo": CityConfig(
+        name="Sao Paulo",
+        slug="sao-paulo",  # Polymarket uses hyphen
+        lat=-23.5505,
+        lon=-46.6333,
+        tz="America/Sao_Paulo",
+        station="SBGR",  # Guarulhos
+    ),
+    "wellington": CityConfig(
+        name="Wellington",
+        slug="wellington",
+        lat=-41.2866,
+        lon=174.7756,
+        tz="Pacific/Auckland",
+        station="NZWN",
+    ),
+    "buenos_aires": CityConfig(
+        name="Buenos Aires",
+        slug="buenos-aires",  # Polymarket uses hyphen
+        lat=-34.6037,
+        lon=-58.3816,
+        tz="America/Argentina/Buenos_Aires",
+        station="SAEZ",  # Ezeiza
+    ),
+    "ankara": CityConfig(
+        name="Ankara",
+        slug="ankara",
+        lat=39.9334,
+        lon=32.8597,
+        tz="Europe/Istanbul",
+        station="LTAC",  # Esenboğa
+    ),
 }
 
 # Default cities to monitor (can be overridden)
-DEFAULT_CITIES = ["nyc", "chicago", "miami"]
+# NOTE: Only US cities are currently validated. International cities (london,
+# seoul, paris, wellington, etc.) show systematic bias between Open-Meteo
+# GFS ensemble and Weather Underground resolution data. Miami also shows
+# ~3-4°F cold bias that needs investigation before live trading.
+DEFAULT_CITIES = ["nyc", "chicago"]  # Validated cities only
 
 
 def get_settings() -> Settings:

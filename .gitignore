@@ -39,11 +39,7 @@ env/
 .env.*.local
 
 # Data files (generated at runtime)
-data/
 !src/data
-*.db
-*.sqlite
-*.sqlite3
 
 # Logs
 *.log

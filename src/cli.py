@@ -419,7 +419,12 @@ def collect(
     days: int = typer.Option(
         1,
         "--days", "-d",
-        help="Days ahead to forecast (1 = tomorrow)",
+        help="Days ahead to forecast (1 = tomorrow). Use --max-days to collect multiple.",
+    ),
+    max_days: int = typer.Option(
+        None,
+        "--max-days", "-m",
+        help="Collect forecasts for days 1 through max_days (e.g., -m 4 collects 1-4 day forecasts)",
     ),
     force: bool = typer.Option(
         False,
@@ -427,30 +432,51 @@ def collect(
         help="Overwrite existing forecasts",
     ),
 ):
-    """Collect and store ensemble forecasts for backtesting."""
+    """Collect and store ensemble forecasts for backtesting.
+
+    Examples:
+        collect                    # Collect 1-day forecasts for all cities
+        collect --days 2           # Collect 2-day forecasts only
+        collect --max-days 4       # Collect 1, 2, 3, and 4-day forecasts
+        collect -c nyc,chicago -m 4  # Collect 1-4 day for specific cities
+    """
     from .data.collector import ForecastCollector
 
     city_list = None
     if cities_opt:
         city_list = [c.strip() for c in cities_opt.split(",")]
 
-    target_date = date.today() + timedelta(days=days)
-    typer.echo(f"Collecting ensemble forecasts for {target_date}")
-    if city_list:
-        typer.echo(f"Cities: {', '.join(city_list)}")
+    # Determine which days to collect
+    if max_days:
+        days_to_collect = list(range(1, max_days + 1))
     else:
-        typer.echo(f"Cities: all ({len(CITIES)})")
+        days_to_collect = [days]
 
     collector = ForecastCollector()
-    results = asyncio.run(collector.collect_all(city_list, days, force))
+    total_collected = 0
 
-    typer.echo(f"\nCollected {len(results)} forecasts:")
-    for city, forecast in results.items():
-        typer.echo(
-            f"  {city}: mean={forecast.mean:.1f}F, "
-            f"range={forecast.min_temp:.1f}-{forecast.max_temp:.1f}F, "
-            f"std={forecast.std:.1f}F"
-        )
+    for d in days_to_collect:
+        target_date = date.today() + timedelta(days=d)
+        typer.echo(f"\n{'='*50}")
+        typer.echo(f"Collecting {d}-day forecasts for {target_date}")
+        if city_list:
+            typer.echo(f"Cities: {', '.join(city_list)}")
+        else:
+            typer.echo(f"Cities: all ({len(CITIES)})")
+
+        results = asyncio.run(collector.collect_all(city_list, d, force))
+        total_collected += len(results)
+
+        typer.echo(f"Collected {len(results)} forecasts:")
+        for city, forecast in results.items():
+            typer.echo(
+                f"  {city}: mean={forecast.mean:.1f}F, "
+                f"range={forecast.min_temp:.1f}-{forecast.max_temp:.1f}F, "
+                f"std={forecast.std:.1f}F"
+            )
+
+    typer.echo(f"\n{'='*50}")
+    typer.echo(f"Total: {total_collected} forecasts collected")
 
 
 @app.command()
@@ -474,6 +500,176 @@ def list_forecasts():
             typer.echo(f"{target_date}:")
             current_date = target_date
         typer.echo(f"  - {city}")
+
+
+@app.command()
+def signals(
+    cities_opt: str = typer.Option(
+        None,
+        "--cities", "-c",
+        help="Comma-separated list of cities (defaults to all)",
+    ),
+    verify: bool = typer.Option(
+        False,
+        "--verify", "-v",
+        help="Show detailed verification of each signal",
+    ),
+    min_edge: float = typer.Option(
+        8.0,
+        "--min-edge",
+        help="Minimum edge percentage to show",
+    ),
+    filter_mode: str = typer.Option(
+        "moderate",
+        "--filter",
+        help="Confidence filter: conservative, moderate, aggressive, disabled",
+    ),
+):
+    """Show current trading signals with optional verification.
+
+    Examples:
+        signals                    # All signals, moderate filter
+        signals --verify           # With detailed verification
+        signals -c miami,nyc       # Specific cities only
+        signals --filter disabled  # No probability filter
+    """
+    from .strategies.weather import WeatherStrategy, ConfidenceFilter
+
+    settings = get_settings()
+
+    # Parse cities
+    if cities_opt:
+        city_list = [c.strip() for c in cities_opt.split(",")]
+    else:
+        city_list = list(CITIES.keys())
+
+    # Get filter
+    filter_map = {
+        "conservative": ConfidenceFilter.conservative,
+        "moderate": ConfidenceFilter.moderate,
+        "aggressive": ConfidenceFilter.aggressive,
+        "disabled": ConfidenceFilter.disabled,
+    }
+    confidence_filter = filter_map.get(filter_mode, ConfidenceFilter.moderate)()
+
+    strategy = WeatherStrategy(
+        settings=settings,
+        cities=city_list,
+        confidence_filter=confidence_filter,
+    )
+
+    typer.echo("=" * 70)
+    typer.echo("CURRENT TRADING SIGNALS")
+    typer.echo("=" * 70)
+    typer.echo(f"Filter: {filter_mode} (min_bucket_prob >= {confidence_filter.min_bucket_probability:.0%})")
+    typer.echo(f"Edge threshold: {settings.edge_threshold_pct}%")
+    typer.echo(f"Cities: {len(city_list)}")
+    typer.echo("=" * 70)
+
+    result = asyncio.run(strategy.generate_signals())
+
+    if result.errors:
+        typer.echo(f"\nWarnings: {len(result.errors)} errors encountered")
+
+    if not result.signals:
+        typer.echo("\nNO SIGNALS - No trades meet criteria")
+        return
+
+    typer.echo(f"\n{len(result.signals)} SIGNALS FOUND:\n")
+
+    for s in result.signals:
+        city = s.metadata.get("city", "unknown").upper()
+        bucket_low = s.metadata.get("bucket_low")
+        bucket_high = s.metadata.get("bucket_high")
+
+        if bucket_low is None:
+            bucket_str = f"<={bucket_high}°F" if bucket_high else "?"
+        elif bucket_high is None:
+            bucket_str = f">={bucket_low}°F"
+        else:
+            bucket_str = f"{bucket_low}-{bucket_high}°F"
+
+        typer.echo(f"  {city} {s.target_date} | {bucket_str}")
+        typer.echo(f"    Model: {s.model_probability:.0%} | Market: {s.market_price:.1%} | Edge: {s.edge:.1%}")
+        typer.echo(f"    Position: ${s.position_size_usd:.2f} | EV: ${s.expected_value:.2f}")
+
+        if verify:
+            # Show ensemble stats
+            std = s.metadata.get("ensemble_std", 0)
+            typer.echo(f"    Ensemble std: {std:.1f}°F | Confidence: {s.confidence:.2f}")
+            typer.echo(f"    Token: {s.token_id[:30]}...")
+
+        typer.echo()
+
+    # Summary
+    total_position = sum(s.position_size_usd for s in result.signals)
+    total_ev = sum(s.expected_value for s in result.signals)
+    typer.echo("-" * 70)
+    typer.echo(f"TOTAL: ${total_position:.2f} position | ${total_ev:.2f} expected value")
+
+
+@app.command()
+def outcomes(
+    target_date: str = typer.Argument(
+        None,
+        help="Date to check (YYYY-MM-DD), defaults to today",
+    ),
+    cities_opt: str = typer.Option(
+        None,
+        "--cities", "-c",
+        help="Comma-separated list of cities (defaults to all)",
+    ),
+):
+    """Check resolution outcomes for a date.
+
+    Examples:
+        outcomes                  # Check today's outcomes
+        outcomes 2026-02-19       # Check specific date
+        outcomes -c miami,nyc     # Specific cities
+    """
+    from .clients.gamma import GammaClient
+    import json as json_module
+    import httpx
+
+    if target_date:
+        check_date = date.fromisoformat(target_date)
+    else:
+        check_date = date.today()
+
+    city_list = None
+    if cities_opt:
+        city_list = [c.strip() for c in cities_opt.split(",")]
+    else:
+        city_list = list(CITIES.keys())
+
+    typer.echo(f"\n=== OUTCOMES FOR {check_date} ===\n")
+
+    async def check_outcomes():
+        async with httpx.AsyncClient(timeout=30) as client:
+            for city in city_list:
+                month_name = check_date.strftime("%B").lower()
+                slug = f"highest-temperature-in-{city}-on-{month_name}-{check_date.day}-{check_date.year}"
+
+                resp = await client.get(f"https://gamma-api.polymarket.com/events/slug/{slug}")
+                if resp.status_code == 404:
+                    continue
+
+                data = resp.json()
+
+                # Find resolved bucket
+                resolved_bucket = None
+                for m in data.get("markets", []):
+                    prices = json_module.loads(m.get("outcomePrices", "[]"))
+                    if len(prices) >= 2 and prices[0] == "1":
+                        resolved_bucket = m.get("question", "")
+                        break
+
+                if resolved_bucket:
+                    typer.echo(f"{city.upper():>12}: {resolved_bucket[:50]}")
+                else:
+                    typer.echo(f"{city.upper():>12}: Not yet resolved")
+
+    asyncio.run(check_outcomes())
 
 
 def main():

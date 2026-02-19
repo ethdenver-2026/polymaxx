@@ -47,29 +47,60 @@ class WeatherEvent:
         return [b for b in self.buckets if b.active and not b.closed]
 
 
+def _celsius_to_fahrenheit(c: float) -> float:
+    """Convert Celsius to Fahrenheit."""
+    return c * 9 / 5 + 32
+
+
 def parse_temp_range(question: str) -> tuple[float | None, float | None]:
     """
     Extract temperature range from market question.
 
+    Handles both Fahrenheit (US cities) and Celsius (international cities).
+    Returns temperatures normalized to Fahrenheit for consistent comparison.
+
     Returns (low, high) where:
     - "between 34-35°F" → (34, 36)  # high is exclusive
+    - "between 5-6°C" → (41.0, 44.6)  # converted to F, high exclusive
     - "31°F or below" → (None, 32)
+    - "5°C or below" → (None, 42.8)  # 6°C in F
     - "46°F or higher" → (46, None)
+    - "10°C or higher" → (50, None)
     """
-    # "between 34-35°F" → (34, 36)
+    # Detect unit - check for °C first since some questions have both symbols
+    is_celsius = "°C" in question
+
+    # "between 34-35°F" or "between 5-6°C" → (low, high+1)
     match = re.search(r"between (\d+)-(\d+)", question)
     if match:
-        return float(match.group(1)), float(match.group(2)) + 1
+        low = float(match.group(1))
+        high = float(match.group(2)) + 1
+        if is_celsius:
+            return _celsius_to_fahrenheit(low), _celsius_to_fahrenheit(high)
+        return low, high
 
-    # "31°F or below" → (None, 32)
-    match = re.search(r"(\d+)°F or below", question)
+    # "31°F or below" or "5°C or below" → (None, val+1)
+    match = re.search(r"(\d+)°[FC] or below", question)
     if match:
-        return None, float(match.group(1)) + 1
+        val = float(match.group(1)) + 1
+        if is_celsius:
+            return None, _celsius_to_fahrenheit(val)
+        return None, val
 
-    # "46°F or higher" or "46°F or above"
-    match = re.search(r"(\d+)°F or (?:higher|above)", question)
+    # "46°F or higher" or "10°C or higher" or "or above"
+    match = re.search(r"(\d+)°[FC] or (?:higher|above)", question)
     if match:
-        return float(match.group(1)), None
+        val = float(match.group(1))
+        if is_celsius:
+            return _celsius_to_fahrenheit(val), None
+        return val, None
+
+    # Single-degree Celsius buckets: "be 6°C on" → (6, 7) in C → (42.8, 44.6) in F
+    # This format is used for international cities
+    match = re.search(r"be (\d+)°C on", question)
+    if match:
+        val = float(match.group(1))
+        return _celsius_to_fahrenheit(val), _celsius_to_fahrenheit(val + 1)
 
     return None, None
 

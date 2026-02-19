@@ -60,34 +60,55 @@ class ForecastCollector:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.client = client or OpenMeteoClient()
 
-    def _get_file_path(self, city: str, target_date: date) -> Path:
-        """Get storage path for a forecast."""
+    def _get_file_path(self, city: str, target_date: date, forecast_date: date | None = None) -> Path:
+        """Get storage path for a forecast.
+
+        New format includes forecast_date for multi-day tracking:
+        {city}_{target_date}_from_{forecast_date}.json
+
+        Falls back to legacy format {city}_{target_date}.json for backwards compat.
+        """
+        if forecast_date:
+            return self.data_dir / f"{city}_{target_date.isoformat()}_from_{forecast_date.isoformat()}.json"
         return self.data_dir / f"{city}_{target_date.isoformat()}.json"
 
-    def _forecast_exists(self, city: str, target_date: date) -> bool:
+    def _forecast_exists(self, city: str, target_date: date, forecast_date: date | None = None) -> bool:
         """Check if forecast already exists."""
-        return self._get_file_path(city, target_date).exists()
+        return self._get_file_path(city, target_date, forecast_date).exists()
 
     def _save_forecast(self, forecast: StoredForecast) -> None:
-        """Save forecast to JSON file."""
+        """Save forecast to JSON file with new multi-day format."""
         path = self._get_file_path(
             forecast.city,
             date.fromisoformat(forecast.target_date),
+            date.fromisoformat(forecast.forecast_date),
         )
         with open(path, "w") as f:
             json.dump(asdict(forecast), f, indent=2)
+        lead_days = (date.fromisoformat(forecast.target_date) - date.fromisoformat(forecast.forecast_date)).days
         logger.info(
             "Saved forecast",
             city=forecast.city,
             target_date=forecast.target_date,
+            forecast_date=forecast.forecast_date,
+            lead_days=lead_days,
             path=str(path),
         )
 
-    def load_forecast(self, city: str, target_date: date) -> StoredForecast | None:
-        """Load a stored forecast."""
-        path = self._get_file_path(city, target_date)
+    def load_forecast(self, city: str, target_date: date, forecast_date: date | None = None) -> StoredForecast | None:
+        """Load a stored forecast.
+
+        Args:
+            city: City slug
+            target_date: Date being forecasted
+            forecast_date: When forecast was made (for multi-day format)
+        """
+        path = self._get_file_path(city, target_date, forecast_date)
         if not path.exists():
-            return None
+            # Try legacy format
+            path = self._get_file_path(city, target_date, None)
+            if not path.exists():
+                return None
         with open(path) as f:
             data = json.load(f)
         return StoredForecast(**data)
@@ -110,11 +131,19 @@ class ForecastCollector:
         Returns:
             StoredForecast if successful, None otherwise
         """
-        if not force and self._forecast_exists(city, target_date):
-            logger.debug("Forecast already exists", city=city, target_date=str(target_date))
-            return self.load_forecast(city, target_date)
-
         forecast_date = date.today()
+        lead_days = (target_date - forecast_date).days
+
+        # Check if we already have a forecast for this specific (target, forecast) pair
+        if not force and self._forecast_exists(city, target_date, forecast_date):
+            logger.debug(
+                "Forecast already exists",
+                city=city,
+                target_date=str(target_date),
+                forecast_date=str(forecast_date),
+                lead_days=lead_days,
+            )
+            return self.load_forecast(city, target_date, forecast_date)
 
         try:
             ensemble = await self.client.get_ensemble_forecast(

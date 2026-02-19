@@ -7,7 +7,7 @@ from ...config import Settings, CITIES
 from ...clients.gamma import GammaClient
 from ..base import BaseStrategy, StrategyResult, Signal
 from .open_meteo import OpenMeteoClient
-from .signals import calculate_weather_signals
+from .signals import calculate_weather_signals, ConfidenceFilter
 
 
 logger = structlog.get_logger()
@@ -25,9 +25,11 @@ class WeatherStrategy(BaseStrategy):
         self,
         settings: Settings,
         cities: list[str] | None = None,
+        confidence_filter: ConfidenceFilter | None = None,
     ):
         self.settings = settings
         self.city_slugs = cities or ["nyc", "chicago", "miami"]
+        self.confidence_filter = confidence_filter or ConfidenceFilter.moderate()
         self.open_meteo = OpenMeteoClient()
         self.gamma = GammaClient()
 
@@ -83,7 +85,7 @@ class WeatherStrategy(BaseStrategy):
                 errors.append(f"Forecast error for {event.city}: {e}")
                 continue
 
-            # Calculate signals
+            # Calculate signals with confidence filter
             signals = calculate_weather_signals(
                 ensemble=forecast,
                 event=event,
@@ -91,6 +93,7 @@ class WeatherStrategy(BaseStrategy):
                 kelly_fraction=self.settings.kelly_fraction,
                 max_position=self.settings.max_position_usd,
                 edge_threshold=self.settings.edge_threshold_pct / 100,
+                confidence_filter=self.confidence_filter,
             )
 
             for signal in signals:
