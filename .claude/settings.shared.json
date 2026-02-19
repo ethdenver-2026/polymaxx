@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(forge:*)",
+      "Bash(rm:*)",
+      "Bash(bun:*)",
+      "Bash(/doctor)",
+      "Bash(bunx:*)",
+      "WebFetch(domain:wagmi.sh)",
+      "Bash(timeout 30 bun run storybook:build)",
+      "Bash(turbo:*)",
+      "Bash(node:*)",
+      "Bash(npx:*)",
+      "Bash(rg:*)",
+      "Bash(git:*)",
+      "Bash(cast:*)",
+      "Bash(foundryup:*)",
+      "Bash(./generate-types.sh:*)",
+      "WebFetch",
+      "WebSearch",
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)"
+    ],
+    "deny": [],
+    "env": {
+      "DISABLE_TELEMETRY": "1"
+    }
+  }
+}
