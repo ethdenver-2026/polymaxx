@@ -1,9 +1,12 @@
 [project]
-name = "prediction-market-bot"
+name = "signal-producer"
 version = "0.1.0"
-description = "Polymarket weather prediction trading bot"
+description = "Signal producer for prediction market trading"
 requires-python = ">=3.12"
 dependencies = [
+    # Shared schema
+    "signal-schema",
+
     # HTTP client
     "httpx[http2]>=0.28.0",
 
@@ -47,7 +50,7 @@ backtest = [
 ]
 
 [project.scripts]
-polymarket-bot = "src.cli:main"
+signal-producer = "signal_producer.cli:main"
 
 [build-system]
 requires = ["hatchling"]
