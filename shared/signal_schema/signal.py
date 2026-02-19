@@ -18,6 +18,13 @@ class MarketType(str, Enum):
     KALSHI = "kalshi"
 
 
+class Side(str, Enum):
+    """Order side."""
+
+    BUY = "buy"
+    SELL = "sell"
+
+
 class SignalMetadata(BaseModel):
     """Strategy-specific metadata attached to a signal."""
 
@@ -41,6 +48,7 @@ class Signal(BaseModel):
     market_type: MarketType = Field(default=MarketType.POLYMARKET)
     market_id: str = Field(description="Platform event/market ID")
     token_id: str = Field(description="CLOB token ID to trade")
+    side: Side = Field(default=Side.BUY, description="Order side: buy or sell")
 
     # Signal data
     description: str = Field(description="Human-readable description of the market")
