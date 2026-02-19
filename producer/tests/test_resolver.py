@@ -4,7 +4,7 @@ import pytest
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
-from src.services.resolver import ResolutionService
+from signal_producer.services.resolver import ResolutionService
 
 
 class TestResolutionService:

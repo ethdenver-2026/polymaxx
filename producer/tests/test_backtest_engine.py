@@ -4,12 +4,12 @@ import pytest
 from datetime import date
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from src.backtest.engine import (
+from signal_producer.backtest.engine import (
     BacktestEngine,
     BacktestResult,
     TradeResult,
 )
-from src.backtest.gefs import EnsembleForecast
+from signal_producer.backtest.gefs import EnsembleForecast
 
 
 class TestTradeResult:
@@ -87,7 +87,7 @@ class TestBacktestEngine:
 
     def test_bucket_contains_temp_range(self):
         """Test temperature containment for range bucket."""
-        from src.strategies.weather.markets import WeatherBucket
+        from signal_producer.strategies.weather.markets import WeatherBucket
 
         engine = BacktestEngine()
         bucket = WeatherBucket(
@@ -109,7 +109,7 @@ class TestBacktestEngine:
 
     def test_bucket_contains_temp_or_below(self):
         """Test 'X or below' bucket."""
-        from src.strategies.weather.markets import WeatherBucket
+        from signal_producer.strategies.weather.markets import WeatherBucket
 
         engine = BacktestEngine()
         bucket = WeatherBucket(
@@ -130,7 +130,7 @@ class TestBacktestEngine:
 
     def test_bucket_contains_temp_or_above(self):
         """Test 'X or above' bucket."""
-        from src.strategies.weather.markets import WeatherBucket
+        from signal_producer.strategies.weather.markets import WeatherBucket
 
         engine = BacktestEngine()
         bucket = WeatherBucket(
@@ -151,7 +151,7 @@ class TestBacktestEngine:
 
     def test_calculate_model_prob(self):
         """Test model probability calculation."""
-        from src.strategies.weather.markets import WeatherBucket
+        from signal_producer.strategies.weather.markets import WeatherBucket
 
         engine = BacktestEngine()
 
@@ -182,7 +182,7 @@ class TestBacktestEngine:
     @pytest.mark.asyncio
     async def test_run_single_day_no_gefs_data(self):
         """Test handling when GEFS data is unavailable."""
-        from src.config import CITIES
+        from signal_producer.config import CITIES
 
         engine = BacktestEngine()
 
@@ -201,7 +201,7 @@ class TestBacktestEngine:
     @pytest.mark.asyncio
     async def test_run_single_day_no_market_data(self):
         """Test handling when market data is unavailable."""
-        from src.config import CITIES
+        from signal_producer.config import CITIES
 
         engine = BacktestEngine()
 
@@ -233,7 +233,7 @@ class TestBacktestEngineIntegration:
     @pytest.mark.asyncio
     async def test_run_single_historical_day(self):
         """Test backtesting a single historical day."""
-        from src.config import CITIES
+        from signal_producer.config import CITIES
 
         engine = BacktestEngine()
 
