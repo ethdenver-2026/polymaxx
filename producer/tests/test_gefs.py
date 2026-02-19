@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from pathlib import Path
 import tempfile
 
-from src.backtest.gefs import GEFSClient, EnsembleForecast, ENSEMBLE_MEMBERS, GEFSMember
+from signal_producer.backtest.gefs import GEFSClient, EnsembleForecast, ENSEMBLE_MEMBERS, GEFSMember
 
 
 class TestEnsembleForecast:

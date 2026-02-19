@@ -3,7 +3,7 @@
 import pytest
 from datetime import date, datetime
 
-from src.data.models import SignalRecord, Trade, Position, init_db, get_session
+from signal_producer.data.models import SignalRecord, Trade, Position, init_db, get_session
 
 
 @pytest.fixture

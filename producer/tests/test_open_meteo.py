@@ -234,7 +234,7 @@ class TestOpenMeteoClient:
     @pytest.mark.asyncio
     async def test_get_ensemble_forecast_returns_31_members(self):
         """Verify client returns 31 ensemble members."""
-        from src.strategies.weather.open_meteo import OpenMeteoClient
+        from signal_producer.strategies.weather.open_meteo import OpenMeteoClient
 
         client = OpenMeteoClient()
         target = date.today() + timedelta(days=1)
@@ -254,7 +254,7 @@ class TestOpenMeteoClient:
     @pytest.mark.asyncio
     async def test_get_ensemble_forecast_temps_in_reasonable_range(self):
         """Verify temperatures are in a reasonable range."""
-        from src.strategies.weather.open_meteo import OpenMeteoClient
+        from signal_producer.strategies.weather.open_meteo import OpenMeteoClient
 
         client = OpenMeteoClient()
         target = date.today() + timedelta(days=1)
@@ -274,7 +274,7 @@ class TestOpenMeteoClient:
     @pytest.mark.asyncio
     async def test_ensemble_forecast_statistics(self):
         """Verify forecast statistics properties work."""
-        from src.strategies.weather.open_meteo import OpenMeteoClient
+        from signal_producer.strategies.weather.open_meteo import OpenMeteoClient
 
         client = OpenMeteoClient()
         target = date.today() + timedelta(days=1)

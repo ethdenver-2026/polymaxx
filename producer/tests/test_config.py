@@ -1,6 +1,6 @@
 """Tests for configuration."""
 
-from src.config import CITIES
+from signal_producer.config import CITIES
 
 
 def test_seoul_in_cities():
