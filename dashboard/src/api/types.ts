@@ -32,7 +32,7 @@ export interface ClosedPosition {
 
 export interface Activity {
   id: string;
-  timestamp: string;
+  timestamp: number | string;
   type: string; // "TRADE" | "REDEEM" | "DEPOSIT" | "WITHDRAWAL"
   title: string;
   outcome: string;

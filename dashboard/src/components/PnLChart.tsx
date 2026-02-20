@@ -23,21 +23,50 @@ interface DataPoint {
   pnl: number;
 }
 
+function formatLabel(time: number, spanDays: number): string {
+  const d = new Date(time);
+  if (spanDays > 3) {
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  if (spanDays > 1) {
+    return d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit" });
+  }
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function bucketKey(time: number, spanDays: number): string {
+  const d = new Date(time);
+  if (spanDays > 3) {
+    // Bucket by day
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  }
+  if (spanDays > 1) {
+    // Bucket by hour
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}`;
+  }
+  // Bucket by minute
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}-${d.getMinutes()}`;
+}
+
 function buildPnLSeries(activity: Activity[], positions: Position[]): DataPoint[] {
-  // Build cumulative P&L from trade activity
-  // BUY = spend USDC (negative), SELL/REDEEM = receive USDC (positive)
   const trades = activity
     .filter((a) => a.timestamp && (a.type === "TRADE" || a.type === "REDEEM"))
-    .map((a) => ({
-      time: new Date(a.timestamp).getTime(),
-      usdc: a.usdcSize ?? 0,
-      type: a.type,
-      side: a.side,
-    }))
+    .map((a) => {
+      // API returns Unix seconds (number) or ISO string
+      const ts = typeof a.timestamp === "number"
+        ? a.timestamp * 1000
+        : new Date(a.timestamp).getTime();
+      return {
+        time: ts,
+        usdc: a.usdcSize ?? 0,
+        type: a.type,
+        side: a.side,
+      };
+    })
+    .filter((t) => !isNaN(t.time))
     .sort((a, b) => a.time - b.time);
 
   if (trades.length === 0) {
-    // Fall back to positions snapshot if no trade history
     if (positions.length === 0) return [];
 
     const now = Date.now();
@@ -62,9 +91,13 @@ function buildPnLSeries(activity: Activity[], positions: Position[]): DataPoint[
     return points;
   }
 
-  // Compute cumulative cash flow
+  // Determine time span to choose bucket granularity
+  const spanMs = (trades[trades.length - 1].time - trades[0].time) || 1;
+  const spanDays = spanMs / 86_400_000;
+
+  // Compute cumulative cash flow, collapsing trades into time buckets
   let cumulative = 0;
-  const points: DataPoint[] = [];
+  const pointMap = new Map<string, DataPoint>();
 
   for (const t of trades) {
     if (t.type === "REDEEM") {
@@ -72,21 +105,17 @@ function buildPnLSeries(activity: Activity[], positions: Position[]): DataPoint[
     } else if (t.side === "SELL") {
       cumulative += t.usdc;
     } else {
-      // BUY — cost
       cumulative -= t.usdc;
     }
 
-    points.push({
-      time: t.time,
-      label: new Date(t.time).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-      pnl: cumulative,
-    });
+    const key = bucketKey(t.time, spanDays);
+    const label = formatLabel(t.time, spanDays);
+    pointMap.set(key, { time: t.time, label, pnl: cumulative });
   }
 
-  // Add current unrealized P&L from open positions as the final point
+  const points = Array.from(pointMap.values());
+
+  // Add current unrealized P&L as the final point
   const unrealizedPnl = positions.reduce(
     (sum, p) => sum + (p.cashPnl ?? 0),
     0

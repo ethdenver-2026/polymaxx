@@ -23,7 +23,7 @@ export async function getPortfolioValue(
 
 export async function getActivity(wallet: string): Promise<Activity[]> {
   const res = await fetch(
-    `${DATA_API}/activity?user=${wallet}&limit=50`
+    `${DATA_API}/activity?user=${wallet}&limit=500`
   );
   if (!res.ok) return [];
   const data = await res.json();
