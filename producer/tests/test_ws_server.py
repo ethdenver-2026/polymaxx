@@ -1,34 +1,44 @@
 """Smoke tests for websocket signal delivery."""
 
-from datetime import datetime
-
 from fastapi.testclient import TestClient
 
 import signal_producer.ws_server as ws_server
-from signal_producer.models.models import SignalRecord
+from signal_producer.signals.types import ProducerSignal
 
 
-def test_consumer_receives_full_signal_record_payload(monkeypatch):
-    """Consumer websocket receives the full SignalRecord payload."""
+def test_consumer_receives_canonical_producer_signal_payload(monkeypatch):
+    """Consumer websocket receives canonical ProducerSignal payload."""
 
     async def fake_run_once(cities=None, broadcast_signals=False):
-        record = SignalRecord(
-            id=42,
-            strategy="weather",
-            market_id="event-123",
-            token_id="token-abc",
+        signal = ProducerSignal(
+            signal_type="weather",
             model_probability=0.7,
-            market_price=0.55,
-            edge=0.15,
             confidence=0.8,
-            decision="trade",
-            skip_reason=None,
-            trade_id=None,
-            created_at=datetime(2026, 2, 20, 1, 2, 3),
-            metadata_json='{"city":"nyc","bucket":"46-47"}',
+            forecast_source="open_meteo",
+            forecast_time="2026-02-20T01:02:03+00:00",
+            metadata={
+                "city": "nyc",
+                "target_date": "2026-02-20",
+                "ensemble_mean": 46.2,
+                "ensemble_std": 1.7,
+                "members_in_range": 21,
+            },
+            exchanges=[
+                {
+                    "exchange": "polymarket",
+                    "event_id": "event-123",
+                    "token_id": "token-abc",
+                    "side": "yes",
+                    "market_description": "Will the highest temperature in NYC be 46-47F?",
+                    "resolution_source": "https://example.com/weather",
+                    "market_price": 0.55,
+                    "edge": 0.15,
+                    "price_timestamp": "2026-02-20T01:02:03+00:00",
+                }
+            ],
         )
-        await ws_server.broadcaster.broadcast_signal_record(record)
-        return [record]
+        await ws_server.broadcaster.broadcast_producer_signal(signal)
+        return [signal]
 
     monkeypatch.setattr(ws_server, "run_once", fake_run_once)
 
@@ -41,18 +51,12 @@ def test_consumer_receives_full_signal_record_payload(monkeypatch):
             payload = websocket.receive_json()
             assert "published_at" in payload
             payload.pop("published_at")
-            assert payload == {
-                "id": 42,
-                "strategy": "weather",
-                "market_id": "event-123",
-                "token_id": "token-abc",
-                "model_probability": 0.7,
-                "market_price": 0.55,
-                "edge": 0.15,
-                "confidence": 0.8,
-                "decision": "trade",
-                "skip_reason": None,
-                "trade_id": None,
-                "created_at": "2026-02-20T01:02:03",
-                "metadata_json": '{"city":"nyc","bucket":"46-47"}',
-            }
+            assert payload["signal_type"] == "weather"
+            assert payload["model_probability"] == 0.7
+            assert payload["forecast_source"] == "open_meteo"
+            assert payload["metadata"]["city"] == "nyc"
+            assert payload["metadata"]["target_date"] == "2026-02-20"
+            assert payload["exchanges"][0]["exchange"] == "polymarket"
+            assert payload["exchanges"][0]["event_id"] == "event-123"
+            assert payload["exchanges"][0]["token_id"] == "token-abc"
+            assert payload["exchanges"][0]["side"] == "yes"
