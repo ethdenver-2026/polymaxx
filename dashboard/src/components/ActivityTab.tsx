@@ -78,7 +78,7 @@ export function ActivityTab({ wallet }: ActivityTabProps) {
                   )}
                 </td>
                 <td className="px-4 py-2.5 text-right num">
-                  {a.price ? `${(a.price * 100).toFixed(1)}\u00A2` : "---"}
+                  {a.price ? `${(a.price * 100).toFixed(1)}¢` : "---"}
                 </td>
                 <td className="px-4 py-2.5 text-right num">
                   {a.size ? a.size.toFixed(2) : "---"}

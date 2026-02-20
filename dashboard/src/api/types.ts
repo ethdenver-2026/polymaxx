@@ -93,6 +93,5 @@ export interface ConsumerConfig {
   max_position_usd: number;
   kelly_fraction: number;
   edge_threshold_pct: number;
-  daily_loss_limit_pct: number;
   wallet_address: string;
 }
