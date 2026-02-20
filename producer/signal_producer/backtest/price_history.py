@@ -130,14 +130,14 @@ class PriceHistoryClient:
 
         return closest.price
 
-    async def get_bucket_prices_at_forecast_time(
+    async def get_market_prices_at_forecast_time(
         self,
         city: str,
         target_date: date,
         forecast_datetime: datetime,
     ) -> dict[str, float]:
         """
-        Get all bucket prices at the time a forecast was made.
+        Get all market prices at the time a forecast was made.
 
         Args:
             city: City slug (e.g., "nyc")
@@ -145,7 +145,7 @@ class PriceHistoryClient:
             forecast_datetime: When the forecast was made
 
         Returns:
-            Dict mapping bucket question -> price at forecast time
+            Dict mapping market question -> price at forecast time
         """
         # Fetch the event to get token IDs
         event = await self.gamma_client.fetch_weather_event(city, target_date)
@@ -161,16 +161,16 @@ class PriceHistoryClient:
         forecast_ts = int(forecast_datetime.timestamp())
         prices = {}
 
-        for bucket in event.buckets:
-            price = await self.get_price_at_time(bucket.yes_token_id, forecast_ts)
+        for weather_market in event.markets:
+            price = await self.get_price_at_time(weather_market.yes_token_id, forecast_ts)
             if price is not None:
-                prices[bucket.question] = price
+                prices[weather_market.question] = price
             else:
                 # Fall back to current price if historical not available
-                prices[bucket.question] = bucket.yes_price
+                prices[weather_market.question] = weather_market.yes_price
                 logger.debug(
                     "Using current price (no historical data)",
-                    bucket=bucket.question,
+                    market=weather_market.question,
                 )
 
         return prices
