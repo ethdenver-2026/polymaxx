@@ -95,3 +95,28 @@ export interface ConsumerConfig {
   edge_threshold_pct: number;
   wallet_address: string;
 }
+
+export interface PaperPosition {
+  token_id: string;
+  description: string;
+  side: string;
+  entry_price: number;
+  size_usd: number;
+  model_probability: number;
+  edge: number;
+  received_at: number;
+}
+
+export interface GenerateSignalResponse {
+  ok: boolean;
+  action: string;
+  signal: {
+    token_id: string;
+    side: string;
+    model_probability: number;
+    market_price: number;
+    edge: number;
+    description: string;
+  } | null;
+  errors: string[];
+}

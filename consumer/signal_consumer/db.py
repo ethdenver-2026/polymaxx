@@ -167,6 +167,42 @@ def get_signals(limit: int = 100) -> list[dict]:
     return results
 
 
+def get_paper_positions() -> list[dict]:
+    """Return paper (simulated) positions from the signal log."""
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT
+            id,
+            received_at,
+            signal_json,
+            signal_price,
+            signal_edge
+        FROM consumer_signal_log
+        WHERE action = 'simulated'
+        ORDER BY received_at DESC
+        """
+    ).fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        signal = json.loads(row["signal_json"])
+        results.append({
+            "token_id": signal.get("token_id", ""),
+            "description": signal.get("description", ""),
+            "side": signal.get("side", "buy"),
+            "entry_price": row["signal_price"] or signal.get("market_price", 0),
+            "size_usd": signal.get("position_size_usd", 0),
+            "model_probability": signal.get("model_probability", 0),
+            "edge": row["signal_edge"] or signal.get("edge", 0),
+            "received_at": row["received_at"],
+        })
+    return results
+
+
 def get_executed_notional_usd() -> float:
     """Return cumulative notional for executed trades in consumer log."""
     init_db()
