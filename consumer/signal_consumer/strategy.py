@@ -1,11 +1,12 @@
 """
 Strategy layer: abstract pipeline between signal receipt and order execution.
 
-Two-question pipeline:
-  1. can_process  — Do we have enough balance for the trade to go through?
-  2. should_process — Does Kelly criterion say this is profitable?
+Three-stage pipeline:
+  1. can_process    — Do we have enough balance?
+  2. should_process — Is the live edge above our threshold?
+  3. size_position  — How much to bet? (Kelly criterion)
 
-The base `Strategy.process()` orchestrates: can -> should -> execute -> record.
+The base `Strategy.process()` orchestrates: can -> should -> size -> execute -> record.
 Every decision (trade or skip) is recorded to the DB with reasoning.
 
 Usage:
@@ -29,7 +30,7 @@ from .polymarket import init_client, get_live_price, get_clob_balance
 
 logger = logging.getLogger("signal_consumer.strategy")
 
-# Polymarket minimum order value in USD (matches MIN_ORDER_USD in execute_order)
+# Polymarket minimum order value in USD
 MIN_ORDER_SIZE_USD = MIN_ORDER_USD
 
 
@@ -83,17 +84,21 @@ class Strategy(ABC):
 
     @abstractmethod
     def can_process(self, signal: dict, client: ClobClient) -> StrategyCheck:
-        """Can I process? Checks balance is sufficient for tx to go through."""
+        """Stage 1: Can I trade? (e.g. balance check)"""
 
     @abstractmethod
-    def should_process(self, signal: dict, balance: float, client: ClobClient) -> tuple[StrategyCheck, float]:
-        """Should I process? Uses Kelly criterion to determine profitability.
+    def should_process(self, signal: dict, client: ClobClient) -> StrategyCheck:
+        """Stage 2: Should I trade? (live edge vs threshold)"""
+
+    @abstractmethod
+    def size_position(self, signal: dict, balance: float, live_price: float) -> tuple[StrategyCheck, float]:
+        """Stage 3: How much to trade? (Kelly criterion / position sizing)
 
         Returns (check, position_size_usd). position_size_usd is 0 if check fails.
         """
 
     def process(self, signal: dict) -> StrategyResult:
-        """Orchestrate: can -> should -> execute -> record to DB.
+        """Orchestrate: can -> should -> size -> execute -> record.
 
         Always records the decision (trade or skip with reason).
         If an unexpected error occurs, records an error result before re-raising.
@@ -105,7 +110,6 @@ class Strategy(ABC):
         try:
             return self._run_pipeline(signal, signal_price, model_prob, signal_edge)
         except Exception:
-            # Safety net: record a failed result so the signal isn't lost
             logger.exception("Unexpected error in strategy pipeline")
             result = StrategyResult(
                 should_trade=False,
@@ -123,7 +127,7 @@ class Strategy(ABC):
     def _run_pipeline(
         self, signal: dict, signal_price: float, model_prob: float, signal_edge: float,
     ) -> StrategyResult:
-        """Inner pipeline: can -> should -> execute -> record."""
+        """Inner pipeline: can -> should -> size -> execute -> record."""
         checks: list[StrategyCheck] = []
 
         # --- Step 0: Init client once for the whole pipeline ---
@@ -146,7 +150,7 @@ class Strategy(ABC):
             self._record(signal, result)
             return result
 
-        # --- Step 1: Can I? ---
+        # --- Step 1: Can I? (balance check) ---
         can_check = self.can_process(signal, client)
         checks.append(can_check)
 
@@ -165,8 +169,8 @@ class Strategy(ABC):
 
         balance = can_check.data.get("balance", 0.0)
 
-        # --- Step 2: Should I? ---
-        should_check, position_usd = self.should_process(signal, balance, client)
+        # --- Step 2: Should I? (edge check) ---
+        should_check = self.should_process(signal, client)
         checks.append(should_check)
 
         live_price = should_check.data.get("live_price", signal_price)
@@ -185,7 +189,24 @@ class Strategy(ABC):
             self._record(signal, result)
             return result
 
-        # --- Step 3: Execute ---
+        # --- Step 3: How much? (position sizing) ---
+        size_check, position_usd = self.size_position(signal, balance, live_price)
+        checks.append(size_check)
+
+        if not size_check.passed:
+            result = StrategyResult(
+                should_trade=False,
+                adjusted_position_usd=0.0,
+                adjusted_price=live_price,
+                skip_reason=size_check.detail,
+                checks=checks,
+                live_edge=live_edge,
+                signal_edge=signal_edge,
+            )
+            self._record(signal, result)
+            return result
+
+        # --- Step 4: Execute ---
         side = signal.get("side", "buy")
         size = position_usd / live_price if live_price > 0 else 0
         min_size = MIN_ORDER_USD / live_price if live_price > 0 else 0
@@ -289,16 +310,15 @@ class WeatherStrategy(Strategy):
             data={"balance": balance},
         )
 
-    def should_process(self, signal: dict, balance: float, client: ClobClient) -> tuple[StrategyCheck, float]:
-        """Use live price + Kelly criterion to decide profitability."""
+    def should_process(self, signal: dict, client: ClobClient) -> StrategyCheck:
+        """Check live edge is above the configured threshold."""
         token_id = signal["token_id"]
         side = signal.get("side", "buy")
         signal_price = signal["market_price"]
         model_prob = signal["model_probability"]
         edge_threshold = float(os.environ.get("EDGE_THRESHOLD_PCT", "8")) / 100
-        kelly_frac = float(os.environ.get("KELLY_FRACTION", "0.25"))
 
-        # Fetch live price using the shared client
+        # Fetch live price
         try:
             live_price = get_live_price(client, token_id, side)
         except Exception:
@@ -311,56 +331,70 @@ class WeatherStrategy(Strategy):
 
         live_edge = model_prob - live_price
 
-        # Kelly position sizing
+        if live_edge < edge_threshold:
+            return StrategyCheck(
+                name="should_process",
+                passed=False,
+                detail=f"Edge {live_edge*100:.1f}% < threshold {edge_threshold*100:.1f}%",
+                data={
+                    "live_price": live_price,
+                    "live_edge": live_edge,
+                    "model_prob": model_prob,
+                    "edge_threshold": edge_threshold,
+                },
+            )
+
+        return StrategyCheck(
+            name="should_process",
+            passed=True,
+            detail=f"Edge {live_edge*100:.1f}% >= {edge_threshold*100:.1f}%",
+            data={
+                "live_price": live_price,
+                "live_edge": live_edge,
+                "model_prob": model_prob,
+                "edge_threshold": edge_threshold,
+            },
+        )
+
+    def size_position(self, signal: dict, balance: float, live_price: float) -> tuple[StrategyCheck, float]:
+        """Use Kelly criterion to determine position size."""
+        model_prob = signal["model_probability"]
+        kelly_frac = float(os.environ.get("KELLY_FRACTION", "0.25"))
+
         position_usd = kelly_position(model_prob, live_price, balance, kelly_frac)
 
-        # Check: Kelly says position > 0 AND edge > threshold
-        if position_usd <= 0 or live_edge < edge_threshold:
-            reason_parts = []
-            if position_usd <= 0:
-                reason_parts.append(f"Kelly position $0 (prob={model_prob:.3f}, price={live_price:.3f})")
-            if live_edge < edge_threshold:
-                reason_parts.append(
-                    f"Edge {live_edge*100:.1f}% < threshold {edge_threshold*100:.1f}%"
-                )
-            detail = "; ".join(reason_parts)
-
+        if position_usd <= 0:
             return (
                 StrategyCheck(
-                    name="should_process",
+                    name="size_position",
                     passed=False,
-                    detail=detail,
+                    detail=f"Kelly position $0 (prob={model_prob:.3f}, price={live_price:.3f})",
                     data={
-                        "live_price": live_price,
-                        "live_edge": live_edge,
                         "model_prob": model_prob,
-                        "kelly_position": position_usd,
-                        "edge_threshold": edge_threshold,
+                        "live_price": live_price,
+                        "kelly_fraction": kelly_frac,
+                        "balance": balance,
+                        "position_usd": 0.0,
                     },
                 ),
                 0.0,
             )
 
-        # Cap at minimum order size
+        # Floor at minimum order size
         if position_usd < MIN_ORDER_SIZE_USD:
             position_usd = MIN_ORDER_SIZE_USD
 
         return (
             StrategyCheck(
-                name="should_process",
+                name="size_position",
                 passed=True,
-                detail=(
-                    f"Edge {live_edge*100:.1f}% >= {edge_threshold*100:.1f}%, "
-                    f"Kelly ${position_usd:.2f}"
-                ),
+                detail=f"Kelly ${position_usd:.2f} (frac={kelly_frac}, bal=${balance:.2f})",
                 data={
-                    "live_price": live_price,
-                    "live_edge": live_edge,
                     "model_prob": model_prob,
-                    "kelly_position": position_usd,
-                    "edge_threshold": edge_threshold,
+                    "live_price": live_price,
                     "kelly_fraction": kelly_frac,
                     "balance": balance,
+                    "position_usd": position_usd,
                 },
             ),
             position_usd,
