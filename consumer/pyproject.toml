@@ -11,7 +11,12 @@ dependencies = [
     "httpx[http2]>=0.28.0",
 
     # Validation
-    "pydantic>=2.10.0",
+    "pydantic==2.12.5",
+    "pydantic-settings==2.13.1",
+
+    # Webhook server
+    "fastapi>=0.129.0",
+    "uvicorn[standard]>=0.41.0",
 
     # Polymarket trading
     "py-clob-client>=0.34.5",
@@ -24,10 +29,6 @@ dependencies = [
 
     # Utilities
     "python-dotenv>=1.0.0",
-
-    # REST API for dashboard
-    "fastapi>=0.115.0",
-    "uvicorn>=0.34.0",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +37,9 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.4.0",
 ]
+
+[project.scripts]
+signal-consumer = "signal_consumer.api:main"
 
 [build-system]
 requires = ["hatchling"]
