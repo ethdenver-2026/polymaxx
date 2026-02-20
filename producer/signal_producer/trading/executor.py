@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import structlog
 
 from ..config import Settings
-from ..data.models import Trade, get_engine, get_session, init_db
+from ..models.models import Trade, get_engine, get_session, init_db
 from ..strategies.base import Signal
 
 
