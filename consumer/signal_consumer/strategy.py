@@ -18,12 +18,12 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from py_clob_client.client import ClobClient
 
+from .config import get_settings
 from .db import log_signal
 from .execute_order import execute_order, MIN_ORDER_USD
 from .polymarket import init_client, get_live_price, get_clob_balance
@@ -316,7 +316,7 @@ class WeatherStrategy(Strategy):
         side = signal.get("side", "buy")
         signal_price = signal["market_price"]
         model_prob = signal["model_probability"]
-        edge_threshold = float(os.environ.get("EDGE_THRESHOLD_PCT", "8")) / 100
+        edge_threshold = get_settings().edge_threshold_pct / 100
 
         # Fetch live price
         try:
@@ -359,7 +359,7 @@ class WeatherStrategy(Strategy):
     def size_position(self, signal: dict, balance: float, live_price: float) -> tuple[StrategyCheck, float]:
         """Use Kelly criterion to determine position size."""
         model_prob = signal["model_probability"]
-        kelly_frac = float(os.environ.get("KELLY_FRACTION", "0.25"))
+        kelly_frac = get_settings().kelly_fraction
 
         position_usd = kelly_position(model_prob, live_price, balance, kelly_frac)
 

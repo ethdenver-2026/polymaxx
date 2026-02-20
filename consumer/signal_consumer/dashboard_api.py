@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse
 
 from .balances import get_balances
+from .config import get_settings
 from .db import get_signals, subscribe, unsubscribe
 
 app = FastAPI(title="Signal Consumer Dashboard API", version="0.1.0")
@@ -74,12 +75,22 @@ def signals_stream():
 
 @app.get("/api/config")
 def config():
+    s = get_settings()
+
+    if s.trading_mode == "live":
+        try:
+            b = get_balances()
+            bankroll = b.polymarket_usdc
+        except Exception:
+            bankroll = 0.0
+    else:
+        bankroll = s.bankroll_usdc
+
     return {
-        "trading_mode": os.environ.get("TRADING_MODE", "paper"),
-        "bankroll_usdc": float(os.environ.get("BANKROLL_USDC", "50")),
-        "max_position_usd": float(os.environ.get("MAX_POSITION_USD", "5")),
-        "kelly_fraction": float(os.environ.get("KELLY_FRACTION", "0.25")),
-        "edge_threshold_pct": float(os.environ.get("EDGE_THRESHOLD_PCT", "8")),
-        "daily_loss_limit_pct": float(os.environ.get("DAILY_LOSS_LIMIT_PCT", "5")),
+        "trading_mode": s.trading_mode,
+        "bankroll_usdc": bankroll,
+        "max_position_usd": s.max_position_usd,
+        "kelly_fraction": s.kelly_fraction,
+        "edge_threshold_pct": s.edge_threshold_pct,
         "wallet_address": os.environ.get("POLYMARKET_WALLET_ADDRESS", ""),
     }

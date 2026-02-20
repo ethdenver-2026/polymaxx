@@ -168,10 +168,10 @@ export function SignalsTab() {
                       {pct(s.model_probability)}
                     </td>
                     <td className="px-4 py-2.5 text-right num">
-                      {s.signal_price !== null ? `${(s.signal_price * 100).toFixed(1)}\u00A2` : "---"}
+                      {s.signal_price !== null ? `${(s.signal_price * 100).toFixed(1)}¢` : "---"}
                     </td>
                     <td className="px-4 py-2.5 text-right num">
-                      {s.live_price !== null ? `${(s.live_price * 100).toFixed(1)}\u00A2` : "---"}
+                      {s.live_price !== null ? `${(s.live_price * 100).toFixed(1)}¢` : "---"}
                     </td>
                     <td className="px-4 py-2.5">
                       <EdgeBar edge={s.signal_edge} />

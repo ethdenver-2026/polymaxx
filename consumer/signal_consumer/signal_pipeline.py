@@ -186,7 +186,7 @@ def evaluate_strategy(
         )
 
     live_edge = record.model_probability - live_price
-    if live_edge < settings.weather_edge_threshold:
+    if live_edge < settings.edge_threshold_pct / 100:
         return StrategyDecision(
             should_trade=False,
             reasons=["edge_below_threshold"],
