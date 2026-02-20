@@ -1,0 +1,6 @@
+0 */6 * * * cd /Users/adoll/projects/crypto-balance-tracking && /Users/adoll/.nvm/versions/node/v24.3.0/bin/bun run torus.ts >> /Users/adoll/logs/track_torus_balance.log 2>&1
+0 */6 * * * cd /Users/adoll/projects/crypto-balance-tracking && /Users/adoll/.nvm/versions/node/v24.3.0/bin/bun run venice-rewards.ts >> /Users/adoll/logs/track_venice_rewards.log 2>&1
+*/15 * * * * cd /Users/adoll/projects/crypto-balance-tracking && /Users/adoll/.nvm/versions/node/v24.3.0/bin/bun run torus-uniswap-trader.ts >> /Users/adoll/logs/torus_uniswap_trader.log 2>&1
+0 9 * * 1 cd /Users/adoll/.local/toptout && /usr/bin/git pull origin master >> /Users/adoll/logs/toptout_update.log 2>&1
+*/15 * * * * cd /Users/adoll/projects/seedbox-xml-rpc && /Users/adoll/projects/seedbox-xml-rpc/poll-seedbox.sh >> /Users/adoll/poll-seedbox.log 2>&1
+0 2,8,14,20 * * * cd /Users/adoll/projects/prediction-market-known-outcomes && .venv/bin/python -m producer.signal_producer.cli collect --max-days 4 && git add data/ensemble_forecasts/ && git commit --no-gpg-sign -m "Auto-collect ensemble forecasts" -q 2>/dev/null; true >> /Users/adoll/logs/ensemble_collect.log 2>&1
