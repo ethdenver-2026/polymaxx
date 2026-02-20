@@ -18,6 +18,8 @@ logger = structlog.get_logger()
 _client_lock = threading.Lock()
 _market_options_lock = threading.Lock()
 _client_cache: dict[tuple, ClobClient] = {}
+# Cache is process-local and intentionally long-lived for a small token universe.
+# If market cardinality grows, add TTL/eviction.
 _market_options_cache: dict[str, tuple[str, bool]] = {}
 
 
@@ -54,14 +56,8 @@ def build_clob_client(settings: Settings) -> ClobClient:
 
 
 def _client_cache_key(settings: Settings) -> tuple:
-    return (
-        settings.clob_api_url,
-        settings.chain_id,
-        settings.polymarket_private_key,
-        settings.polymarket_api_key,
-        settings.polymarket_api_secret,
-        settings.polymarket_api_passphrase,
-    )
+    # Keep secrets out of dictionary keys; with cached settings this remains stable.
+    return (id(settings),)
 
 
 def get_cached_clob_client(settings: Settings) -> ClobClient:
@@ -75,18 +71,23 @@ def get_cached_clob_client(settings: Settings) -> ClobClient:
 
 
 def get_market_options(client: ClobClient, token_id: str) -> tuple[str, bool]:
+    cached = _market_options_cache.get(token_id)
+    if cached is not None:
+        return cached
+
+    order_book = client.get_order_book(token_id)
+    tick_size = order_book.tick_size
+    neg_risk = order_book.neg_risk
+    if tick_size is None:
+        raise RuntimeError(f"Missing tick_size in order book for token_id={token_id}")
+    if neg_risk is None:
+        raise RuntimeError(f"Missing neg_risk in order book for token_id={token_id}")
+    options = (tick_size, neg_risk)
+
     with _market_options_lock:
         cached = _market_options_cache.get(token_id)
         if cached is not None:
             return cached
-        order_book = client.get_order_book(token_id)
-        tick_size = order_book.tick_size
-        neg_risk = order_book.neg_risk
-        if tick_size is None:
-            raise RuntimeError(f"Missing tick_size in order book for token_id={token_id}")
-        if neg_risk is None:
-            raise RuntimeError(f"Missing neg_risk in order book for token_id={token_id}")
-        options = (tick_size, neg_risk)
         _market_options_cache[token_id] = options
         return options
 

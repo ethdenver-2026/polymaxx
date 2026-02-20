@@ -2,6 +2,8 @@
 
 Runs the FastAPI app in-process using ASGITransport and drives simulated
 weather signals through /webhook/signal to measure ingestion latency.
+
+This is a manual benchmark script and is not part of pytest discovery.
 """
 
 from __future__ import annotations
@@ -61,8 +63,9 @@ def percentile(sorted_vals: list[float], p: float) -> float:
 
 
 async def run_harness(config: HarnessConfig) -> None:
-    # Replace live execution with a deterministic no-op so we only benchmark
-    # webhook parsing/routing/dispatch overhead.
+    # Replace the module-level symbol before create_app() builds route handlers.
+    # The endpoint resolves this name at request time, so the patch is effective
+    # without changing app code.
     def _no_op_execute(*, settings, signal, request_id):
         return {"status": "simulated", "request_id": request_id}
 
