@@ -18,6 +18,7 @@ from .polymarket import execute_weather_signal_market_buy
 
 
 def create_app() -> FastAPI:
+    # TODO: Consolidate trade execution paths with `execute_order.py` to a single pipeline.
     settings = get_settings()
 
     structlog.configure(
@@ -75,11 +76,14 @@ def create_app() -> FastAPI:
             workers_started = True
 
     async def _shutdown_workers() -> None:
+        nonlocal workers_started
         for task in workers:
             task.cancel()
         for task in workers:
             with suppress(asyncio.CancelledError):
                 await task
+        workers.clear()
+        workers_started = False
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

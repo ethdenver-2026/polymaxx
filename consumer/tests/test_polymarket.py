@@ -90,6 +90,32 @@ def test_get_cached_clob_client_reuses_same_instance(monkeypatch):
     assert created["count"] == 1
 
 
+def test_build_clob_client_success_path(monkeypatch):
+    captured = {}
+
+    class DummyClient:
+        pass
+
+    def _fake_client(*, host, key, chain_id, creds):
+        captured["host"] = host
+        captured["key"] = key
+        captured["chain_id"] = chain_id
+        captured["creds"] = creds
+        return DummyClient()
+
+    monkeypatch.setattr(polymarket_module, "ClobClient", _fake_client)
+
+    client = polymarket_module.build_clob_client(_settings())
+
+    assert isinstance(client, DummyClient)
+    assert captured["host"] == "https://clob.polymarket.com"
+    assert captured["key"] == "pk"
+    assert captured["chain_id"] == polymarket_module.POLYGON
+    assert captured["creds"].api_key == "ak"
+    assert captured["creds"].api_secret == "as"
+    assert captured["creds"].api_passphrase == "ap"
+
+
 def test_execute_weather_signal_market_buy_rejects_non_live_mode():
     with pytest.raises(RuntimeError, match="refusing to place real order"):
         polymarket_module.execute_weather_signal_market_buy(
@@ -109,6 +135,7 @@ def test_execute_weather_signal_market_buy_rejects_non_positive_amount(monkeypat
         lambda settings: DummyClient(),
     )
 
+    # Intentionally bypass Pydantic model validation to exercise runtime guard logic.
     signal = SimpleNamespace(token_id="token-abc", position_size_usd=0, market_price=0.5)
 
     with pytest.raises(RuntimeError, match="must be > 0"):

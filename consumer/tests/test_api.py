@@ -202,3 +202,82 @@ async def test_webhook_returns_503_when_execution_queue_is_full(monkeypatch):
     assert 200 in statuses
     assert 503 in statuses
 
+
+@pytest.mark.asyncio
+async def test_worker_error_does_not_stop_subsequent_processing(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "live")
+    monkeypatch.setenv("EXECUTION_WORKERS", "1")
+    monkeypatch.setenv("EXECUTION_QUEUE_MAXSIZE", "10")
+
+    attempts = {"count": 0}
+
+    def _flaky_exec(*, settings, signal, request_id):
+        _ = settings, signal, request_id
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("boom")
+        return {"ok": True}
+
+    monkeypatch.setattr("signal_consumer.api.execute_weather_signal_market_buy", _flaky_exec)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp1 = await client.post(
+            "/webhook/signal",
+            json=_build_signal(edge=0.02).model_dump(mode="json"),
+        )
+        resp2 = await client.post(
+            "/webhook/signal",
+            json=_build_signal(edge=0.03).model_dump(mode="json"),
+        )
+
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+
+    for _ in range(50):
+        if attempts["count"] >= 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert attempts["count"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_webhook_dispatches_multiple_live_signals(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "live")
+    monkeypatch.setenv("EXECUTION_WORKERS", "2")
+    monkeypatch.setenv("EXECUTION_QUEUE_MAXSIZE", "20")
+
+    dispatched = {"count": 0}
+
+    def _fake_exec(*, settings, signal, request_id):
+        _ = settings, request_id
+        assert signal.strategy == "weather"
+        dispatched["count"] += 1
+        return {"ok": True}
+
+    monkeypatch.setattr("signal_consumer.api.execute_weather_signal_market_buy", _fake_exec)
+    app = create_app()
+    total = 8
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        responses = await asyncio.gather(
+            *(
+                client.post(
+                    "/webhook/signal",
+                    json=_build_signal(edge=0.02 + (i * 0.001)).model_dump(mode="json"),
+                )
+                for i in range(total)
+            )
+        )
+
+    assert all(resp.status_code == 200 for resp in responses)
+    assert all(resp.json()["status"] == "accepted" for resp in responses)
+
+    for _ in range(100):
+        if dispatched["count"] == total:
+            break
+        await asyncio.sleep(0.01)
+
+    assert dispatched["count"] == total
+
