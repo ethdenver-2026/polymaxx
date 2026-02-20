@@ -19,18 +19,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
-from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs, PartialCreateOrderOptions
 from py_clob_client.order_builder.constants import BUY, SELL
 
-# Polymarket minimum order size
-MIN_ORDER_SIZE = 5
+from .polymarket import init_client
+
+# Polymarket minimum order value in USD
+MIN_ORDER_USD = 1.0
 
 
 @dataclass
@@ -100,31 +100,6 @@ class SimulationResult:
         }
 
 
-def _init_client() -> ClobClient:
-    """Initialize a ClobClient from environment variables."""
-    private_key = os.environ.get("POLYMARKET_PRIVATE_KEY")
-    if not private_key:
-        raise RuntimeError("POLYMARKET_PRIVATE_KEY not set")
-
-    wallet_address = os.environ.get("POLYMARKET_WALLET_ADDRESS", "")
-    host = os.environ.get("CLOB_API_URL", "https://clob.polymarket.com")
-    chain_id = int(os.environ.get("CHAIN_ID", "137"))
-    sig_type = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2"))
-
-    # Always derive creds from private key to avoid stale env vars
-    temp_client = ClobClient(host, key=private_key, chain_id=chain_id)
-    creds = temp_client.create_or_derive_api_creds()
-
-    return ClobClient(
-        host,
-        key=private_key,
-        chain_id=chain_id,
-        creds=creds,
-        signature_type=sig_type,
-        funder=wallet_address or None,
-    )
-
-
 def simulate_order(
     token_id: str,
     side: str,
@@ -143,15 +118,16 @@ def simulate_order(
     tick_size = "0.01"
     neg_risk = False
 
-    if size < MIN_ORDER_SIZE:
-        errors.append(f"Size {size} below Polymarket minimum ({MIN_ORDER_SIZE}), adjusting to {MIN_ORDER_SIZE}")
-        size = float(MIN_ORDER_SIZE)
+    min_size = MIN_ORDER_USD / price if price > 0 else 0
+    if size < min_size:
+        errors.append(f"Size {size:.1f} below minimum (${MIN_ORDER_USD:.0f} worth = {min_size:.1f} shares), adjusting")
+        size = min_size
 
     side_const = BUY if side.lower() == "buy" else SELL
 
     # --- Connect to CLOB ---
     try:
-        client = _init_client()
+        client = init_client()
     except Exception as e:
         return SimulationResult(
             success=False,
