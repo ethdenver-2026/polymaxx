@@ -1,70 +1,88 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { useConfig } from "@/hooks/queries";
 
 export function SettingsTab() {
   const { data: config, isLoading } = useConfig();
 
   if (isLoading) {
-    return <p className="text-muted-foreground p-4">Loading config...</p>;
+    return (
+      <div className="flex items-center justify-center py-20 text-muted-foreground text-sm">
+        <span className="live-dot mr-2 h-1.5 w-1.5 rounded-full bg-signal-green inline-block" />
+        Loading config...
+      </div>
+    );
   }
 
   if (!config) {
     return (
-      <p className="text-muted-foreground p-4">
-        Could not load config. Is the consumer running?
-      </p>
+      <div className="glow-card rounded-lg p-8 text-center">
+        <div className="text-muted-foreground text-sm">
+          Consumer offline. Cannot load configuration.
+        </div>
+      </div>
     );
   }
 
   const rows = [
-    { label: "Bankroll", value: `$${config.bankroll_usdc.toFixed(2)} USDC` },
-    { label: "Max Position", value: `$${config.max_position_usd.toFixed(2)}` },
-    { label: "Kelly Fraction", value: `${config.kelly_fraction}` },
-    { label: "Edge Threshold", value: `${config.edge_threshold_pct}%` },
-    { label: "Daily Loss Limit", value: `${config.daily_loss_limit_pct}%` },
+    { label: "Bankroll", value: `$${config.bankroll_usdc.toFixed(2)}`, unit: "USDC" },
+    { label: "Max Position", value: `$${config.max_position_usd.toFixed(2)}`, unit: "per trade" },
+    { label: "Kelly Fraction", value: config.kelly_fraction.toString(), unit: "\u00D7" },
+    { label: "Edge Threshold", value: `${config.edge_threshold_pct}%`, unit: "min" },
+    { label: "Daily Loss Limit", value: `${config.daily_loss_limit_pct}%`, unit: "of bankroll" },
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Trading Config */}
+      <div className="glow-card rounded-lg overflow-hidden">
+        <div className="border-b border-[#1e2235] px-4 py-2 flex items-center justify-between">
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
             Trading Configuration
-            <Badge
-              variant={config.trading_mode === "live" ? "destructive" : "secondary"}
-            >
-              {config.trading_mode.toUpperCase()}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="space-y-3">
-            {rows.map((r) => (
-              <div key={r.label} className="flex justify-between">
-                <dt className="text-muted-foreground">{r.label}</dt>
-                <dd className="font-medium">{r.value}</dd>
-              </div>
-            ))}
-          </dl>
-        </CardContent>
-      </Card>
+          </span>
+          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${
+            config.trading_mode === "live"
+              ? "bg-signal-red/15 text-signal-red border-signal-red/30"
+              : "bg-signal-amber/15 text-signal-amber border-signal-amber/30"
+          }`}>
+            {config.trading_mode}
+          </span>
+        </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>x402 Signal Marketplace</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col items-center justify-center py-8">
-          <Separator className="mb-4" />
-          <p className="text-muted-foreground text-center">
-            Pay-per-signal marketplace using the x402 protocol.
+        <div className="p-4 space-y-0">
+          {rows.map((r) => (
+            <div
+              key={r.label}
+              className="flex items-center justify-between py-2.5 border-b border-[#1e2235]/30 last:border-0"
+            >
+              <span className="text-xs text-muted-foreground">{r.label}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-semibold num">{r.value}</span>
+                <span className="text-[10px] text-muted-foreground/50">{r.unit}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* x402 */}
+      <div className="glow-card rounded-lg overflow-hidden">
+        <div className="border-b border-[#1e2235] px-4 py-2">
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            x402 Signal Marketplace
+          </span>
+        </div>
+
+        <div className="p-6 flex flex-col items-center justify-center min-h-[200px]">
+          <div className="w-12 h-12 rounded-full border border-[#1e2235] flex items-center justify-center mb-4">
+            <span className="text-lg text-muted-foreground/30">$</span>
+          </div>
+          <p className="text-sm text-muted-foreground text-center mb-3">
+            Pay-per-signal marketplace using the x402 protocol
           </p>
-          <Badge variant="outline" className="mt-4">
+          <span className="inline-flex items-center rounded-full border border-[#1e2235] px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground/50">
             Coming Soon
-          </Badge>
-        </CardContent>
-      </Card>
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
