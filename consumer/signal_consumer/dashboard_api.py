@@ -15,16 +15,24 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse
 
+from pydantic import BaseModel
+
+import httpx
+import structlog
+
 from .balances import get_balances
-from .config import get_settings
-from .db import get_signals, subscribe, unsubscribe
+from .config import get_settings, get_trading_mode, set_trading_mode
+from .db import get_paper_positions, get_signals, log_signal, subscribe, unsubscribe
+from .signal_generator import generate_signal
+
+logger = structlog.get_logger()
 
 app = FastAPI(title="Signal Consumer Dashboard API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -76,8 +84,9 @@ def signals_stream():
 @app.get("/api/config")
 def config():
     s = get_settings()
+    mode = get_trading_mode()
 
-    if s.trading_mode == "live":
+    if mode == "live":
         try:
             b = get_balances()
             bankroll = b.polymarket_usdc
@@ -87,10 +96,88 @@ def config():
         bankroll = s.bankroll_usdc
 
     return {
-        "trading_mode": s.trading_mode,
+        "trading_mode": mode,
         "bankroll_usdc": bankroll,
         "max_position_usd": s.max_position_usd,
         "kelly_fraction": s.kelly_fraction,
         "edge_threshold_pct": s.edge_threshold_pct,
         "wallet_address": os.environ.get("POLYMARKET_WALLET_ADDRESS", ""),
+    }
+
+
+class TradingModeRequest(BaseModel):
+    mode: str
+
+
+@app.post("/api/config/trading-mode")
+def set_mode(body: TradingModeRequest):
+    try:
+        set_trading_mode(body.mode)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "trading_mode": body.mode}
+
+
+@app.get("/api/paper-positions")
+def paper_positions():
+    return get_paper_positions()
+
+
+class GenerateSignalRequest(BaseModel):
+    cities: list[str] | None = None
+
+
+@app.post("/api/generate-signal")
+async def generate_signal_endpoint(body: GenerateSignalRequest | None = None):
+    """Generate signals — tries producer first, falls back to local generator."""
+    cities = body.cities if body and body.cities else ["nyc", "chicago"]
+
+    # --- Try producer first ---
+    s = get_settings()
+    producer_http = s.producer_ws_url.replace("ws://", "http://").replace("wss://", "https://")
+    producer_http = producer_http.split("/ws/")[0]
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{producer_http}/run-once",
+                params={"cities": ",".join(cities)},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return {
+            "ok": True,
+            "signals_found": data.get("signals_found", 0),
+            "source": "producer",
+            "errors": [],
+        }
+    except (httpx.ConnectError, httpx.HTTPStatusError):
+        logger.info("Producer unreachable, falling back to local generator", cities=cities)
+
+    # --- Fallback: local signal generator per city ---
+    total_logged = 0
+    all_errors: list[str] = []
+
+    for city in cities:
+        try:
+            result = await generate_signal(city_slug=city)
+        except Exception as exc:
+            all_errors.append(f"{city}:{exc}")
+            continue
+
+        signal_data = result["signal_data"]
+        response = result["response"]
+
+        # Always log so every attempt shows in the signal feed
+        log_signal(signal_data, response)
+        total_logged += 1
+
+        if response.get("errors"):
+            all_errors.extend(f"{city}:{e}" for e in response["errors"])
+
+    return {
+        "ok": total_logged > 0,
+        "signals_found": total_logged,
+        "source": "local",
+        "errors": all_errors,
     }
