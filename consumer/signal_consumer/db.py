@@ -20,6 +20,16 @@ DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "consumer_sig
 # Subscribers are queue.Queue instances — one per SSE connection.
 _subscribers: list[queue.Queue[dict]] = []
 _subscribers_lock = threading.Lock()
+_SCHEMA_COLUMNS: dict[str, str] = {
+    "source_created_at": "TEXT",
+    "source_published_at": "TEXT",
+    "decision_status": "TEXT",
+    "strategy_reasons_json": "TEXT",
+    "balance_available_usdc": "REAL",
+    "chosen_position_usd": "REAL",
+    "horizon_hours": "REAL",
+    "metadata_json": "TEXT",
+}
 
 
 def subscribe() -> queue.Queue[dict]:
@@ -64,9 +74,26 @@ def init_db() -> None:
             signal_edge  REAL,
             live_edge    REAL,
             order_id    TEXT,
-            errors      TEXT
+            errors      TEXT,
+            source_created_at TEXT,
+            source_published_at TEXT,
+            decision_status TEXT,
+            strategy_reasons_json TEXT,
+            balance_available_usdc REAL,
+            chosen_position_usd REAL,
+            horizon_hours REAL,
+            metadata_json TEXT
         )
     """)
+    existing_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(consumer_signal_log)").fetchall()
+    }
+    for name, sql_type in _SCHEMA_COLUMNS.items():
+        if name not in existing_cols:
+            conn.execute(
+                f"ALTER TABLE consumer_signal_log ADD COLUMN {name} {sql_type}"
+            )
     conn.commit()
     conn.close()
 
@@ -74,13 +101,19 @@ def init_db() -> None:
 def log_signal(signal_data: dict, response: dict) -> None:
     """Persist a signal and its processing result, then notify subscribers."""
     now = time.time()
+    init_db()
     conn = sqlite3.connect(str(DB_PATH))
+    strategy_reasons = response.get("strategy_reasons", [])
+    if not isinstance(strategy_reasons, list):
+        strategy_reasons = [str(strategy_reasons)]
     cur = conn.execute(
         """
         INSERT INTO consumer_signal_log
             (received_at, signal_json, action, signal_price, live_price,
-             signal_edge, live_edge, order_id, errors)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             signal_edge, live_edge, order_id, errors, source_created_at,
+             source_published_at, decision_status, strategy_reasons_json,
+             balance_available_usdc, chosen_position_usd, horizon_hours, metadata_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now,
@@ -92,6 +125,14 @@ def log_signal(signal_data: dict, response: dict) -> None:
             response.get("live_edge"),
             response.get("order_id"),
             json.dumps(response.get("errors", [])),
+            signal_data.get("created_at"),
+            signal_data.get("published_at"),
+            response.get("status"),
+            json.dumps(strategy_reasons),
+            response.get("balance_available_usdc"),
+            response.get("position_size_usd"),
+            response.get("horizon_hours"),
+            signal_data.get("metadata_json"),
         ),
     )
     conn.commit()
@@ -103,12 +144,14 @@ def log_signal(signal_data: dict, response: dict) -> None:
         "id": row_id,
         "received_at": now,
         "action": response.get("action", "unknown"),
-        "description": signal_data.get("description", ""),
+        "status": response.get("status"),
+        "token_id": signal_data.get("token_id", ""),
     })
 
 
 def get_signals(limit: int = 100) -> list[dict]:
     """Retrieve recent signals from the log."""
+    init_db()
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
@@ -135,5 +178,36 @@ def get_signals(limit: int = 100) -> list[dict]:
             "live_edge": row["live_edge"],
             "order_id": row["order_id"],
             "errors": json.loads(row["errors"]) if row["errors"] else [],
+            "source_created_at": row["source_created_at"],
+            "source_published_at": row["source_published_at"],
+            "decision_status": row["decision_status"],
+            "strategy_reasons": (
+                json.loads(row["strategy_reasons_json"])
+                if row["strategy_reasons_json"]
+                else []
+            ),
+            "balance_available_usdc": row["balance_available_usdc"],
+            "chosen_position_usd": row["chosen_position_usd"],
+            "horizon_hours": row["horizon_hours"],
+            "metadata_json": row["metadata_json"],
         })
     return results
+
+
+def get_executed_notional_usd() -> float:
+    """Return cumulative notional for executed trades in consumer log."""
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(signal_json_extract.position_size_usd), 0.0)
+        FROM (
+            SELECT
+                json_extract(signal_json, '$.position_size_usd') AS position_size_usd
+            FROM consumer_signal_log
+            WHERE action IN ('executed', 'simulated')
+        ) AS signal_json_extract
+        """
+    ).fetchone()
+    conn.close()
+    return float(row[0] or 0.0)

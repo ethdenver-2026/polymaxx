@@ -128,18 +128,19 @@ def _init_client() -> ClobClient:
     )
 
 
-def _get_live_price(client: ClobClient, token_id: str, side: str) -> float | None:
+def _get_live_price(client: ClobClient, token_id: str, side: str) -> float:
     """Fetch the current best price from the orderbook for the given side."""
-    try:
-        book = client.get_order_book(token_id)
-        if side.lower() == "buy":
-            asks = book.asks if book.asks else []
-            return float(asks[0].price) if asks else None
-        else:
-            bids = book.bids if book.bids else []
-            return float(bids[0].price) if bids else None
-    except Exception:
-        return None
+    book = client.get_order_book(token_id)
+    if side.lower() == "buy":
+        asks = book.asks if book.asks else []
+        if not asks:
+            raise RuntimeError(f"No asks available in orderbook for token_id={token_id}")
+        return float(asks[0].price)
+
+    bids = book.bids if book.bids else []
+    if not bids:
+        raise RuntimeError(f"No bids available in orderbook for token_id={token_id}")
+    return float(bids[0].price)
 
 
 def _round_to_tick(price: float, tick_size: str) -> float:
@@ -262,6 +263,10 @@ def execute_signal_data(
     order_type: str = "GTC",
     skip_simulation: bool = False,
     edge_threshold: float | None = None,
+    *,
+    prevalidated_live_price: float | None = None,
+    prevalidated_position_size_usd: float | None = None,
+    enforce_edge_check: bool = True,
 ) -> ExecutionResult:
     """
     Execute a trade from a signal dict with live price validation.
@@ -280,7 +285,11 @@ def execute_signal_data(
     signal_price = data["market_price"]
     model_prob = data["model_probability"]
     signal_edge = data.get("edge", model_prob - signal_price)
-    position_size_usd = data["position_size_usd"]
+    position_size_usd = (
+        prevalidated_position_size_usd
+        if prevalidated_position_size_usd is not None
+        else data["position_size_usd"]
+    )
 
     # --- Fetch live price ---
     try:
@@ -300,16 +309,27 @@ def execute_signal_data(
             signal_edge=signal_edge, live_edge=None,
         )
 
-    live_price = _get_live_price(client, token_id, side)
-
-    if live_price is None:
-        # No liquidity on the book — fall back to signal price
-        live_price = signal_price
+    try:
+        live_price = prevalidated_live_price if prevalidated_live_price is not None else _get_live_price(client, token_id, side)
+    except Exception as e:
+        sim = SimulationResult(
+            success=False, token_id=token_id, side=side, price=signal_price,
+            size=0, tick_size="0.01", neg_risk=False, best_ask=None,
+            best_bid=None, spread=None, would_fill=False, fill_price=None,
+            estimated_cost_usd=0, order_signed=False,
+            errors=[f"Live price fetch failed: {e}"],
+        )
+        return ExecutionResult(
+            success=False, simulation=sim, order_id=None, status=None,
+            errors=[f"Live price fetch failed: {e}"],
+            signal_price=signal_price, live_price=None,
+            signal_edge=signal_edge, live_edge=None,
+        )
 
     # --- Recalculate edge with live price ---
     live_edge = model_prob - live_price
 
-    if live_edge < edge_threshold:
+    if enforce_edge_check and live_edge < edge_threshold:
         sim = SimulationResult(
             success=False, token_id=token_id, side=side, price=live_price,
             size=0, tick_size="0.01", neg_risk=False, best_ask=None,
