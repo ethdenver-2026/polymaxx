@@ -5,7 +5,7 @@ from enum import Enum, auto
 import structlog
 
 from ..base import Signal
-from .markets import WeatherBucket, WeatherEvent
+from .markets import WeatherMarket, WeatherEvent
 from .open_meteo import EnsembleForecast
 from ...trading.kelly import calculate_kelly_position, calculate_edge, calculate_expected_value
 
@@ -69,18 +69,18 @@ class ConfidenceFilter:
         return cls(min_bucket_probability=0.0)
 
 
-def calculate_bucket_probability(
+def calculate_market_probability(
     ensemble: EnsembleForecast,
-    bucket: WeatherBucket,
+    market: WeatherMarket,
 ) -> float:
     """
-    Calculate probability that the actual temperature falls in this bucket.
+    Calculate probability that the actual temperature falls in this market range.
 
-    Uses ensemble member counts: P = (members in bucket) / (total members)
+    Uses ensemble member counts: P = (members in range) / (total members)
     """
     count = sum(
         1 for temp in ensemble.member_highs
-        if bucket.contains_temp(temp)
+        if market.contains_temp(temp)
     )
     return count / len(ensemble.member_highs)
 
@@ -144,23 +144,23 @@ def calculate_weather_signals(
     filtered = []
     confidence = calculate_confidence(ensemble)
 
-    for bucket in event.active_buckets:
-        # Skip if bucket range couldn't be parsed
-        if bucket.low_temp is None and bucket.high_temp is None:
+    for weather_market in event.active_markets:
+        # Skip if market range couldn't be parsed
+        if weather_market.low_temp is None and weather_market.high_temp is None:
             filtered.append(FilteredBucket(
-                bucket_question=bucket.question,
+                bucket_question=weather_market.question,
                 reason=FilterReason.INVALID_BUCKET,
             ))
             continue
 
-        model_prob = calculate_bucket_probability(ensemble, bucket)
-        market_price = bucket.yes_price
+        model_prob = calculate_market_probability(ensemble, weather_market)
+        market_price = weather_market.yes_price
         edge = calculate_edge(model_prob, market_price)
 
         # HIGH CONFIDENCE FILTER #3: Minimum bucket probability (consensus)
         if model_prob < confidence_filter.min_bucket_probability:
             filtered.append(FilteredBucket(
-                bucket_question=bucket.question,
+                bucket_question=weather_market.question,
                 reason=FilterReason.LOW_PROBABILITY,
                 model_prob=model_prob,
                 market_price=market_price,
@@ -172,7 +172,7 @@ def calculate_weather_signals(
         # Only consider positive edge above threshold
         if edge < edge_threshold:
             filtered.append(FilteredBucket(
-                bucket_question=bucket.question,
+                bucket_question=weather_market.question,
                 reason=FilterReason.INSUFFICIENT_EDGE,
                 model_prob=model_prob,
                 market_price=market_price,
@@ -192,7 +192,7 @@ def calculate_weather_signals(
         # Skip if position too small
         if position_size <= 0:
             filtered.append(FilteredBucket(
-                bucket_question=bucket.question,
+                bucket_question=weather_market.question,
                 reason=FilterReason.SMALL_POSITION,
                 model_prob=model_prob,
                 market_price=market_price,
@@ -205,8 +205,8 @@ def calculate_weather_signals(
         signals.append(Signal(
             strategy="weather",
             market_id=event.event_id,
-            token_id=bucket.yes_token_id,
-            description=bucket.question,
+            token_id=weather_market.yes_token_id,
+            description=weather_market.question,
             target_date=ensemble.target_date,
             model_probability=model_prob,
             market_price=market_price,
@@ -216,8 +216,8 @@ def calculate_weather_signals(
             confidence=confidence,
             metadata={
                 "city": ensemble.city,
-                "bucket_low": bucket.low_temp,
-                "bucket_high": bucket.high_temp,
+                "market_low": weather_market.low_temp,
+                "market_high": weather_market.high_temp,
                 "ensemble_std": ensemble.std,
             },
         ))

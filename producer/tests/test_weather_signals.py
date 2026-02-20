@@ -4,7 +4,7 @@ import pytest
 from datetime import date
 
 from signal_producer.strategies.weather.signals import (
-    calculate_bucket_probability,
+    calculate_market_probability,
     calculate_confidence,
     calculate_weather_signals,
     ConfidenceFilter,
@@ -31,7 +31,7 @@ class TestCalculateBucketProbability:
             no_price=0.80,
         )
 
-        prob = calculate_bucket_probability(sample_ensemble, bucket)
+        prob = calculate_market_probability(sample_ensemble, bucket)
 
         # Manually count: members in [42, 44) from sample_ensemble
         # 41.8, 41.9, 42.0, 42.1, 42.2, 42.3, 42.4, 42.5, 42.7, 42.9, 43.1, 43.4, 43.7
@@ -52,7 +52,7 @@ class TestCalculateBucketProbability:
             no_price=0.95,
         )
 
-        prob = calculate_bucket_probability(sample_ensemble, bucket)
+        prob = calculate_market_probability(sample_ensemble, bucket)
         assert prob == 0.0
 
     def test_all_members_in_bucket(self, tight_ensemble):
@@ -66,7 +66,7 @@ class TestCalculateBucketProbability:
             no_price=0.10,
         )
 
-        prob = calculate_bucket_probability(tight_ensemble, bucket)
+        prob = calculate_market_probability(tight_ensemble, bucket)
         assert prob == pytest.approx(1.0)
 
     def test_or_below_bucket(self, sample_ensemble):
@@ -79,7 +79,7 @@ class TestCalculateBucketProbability:
             no_price=0.90,
         )
 
-        prob = calculate_bucket_probability(sample_ensemble, bucket)
+        prob = calculate_market_probability(sample_ensemble, bucket)
 
         # Count members < 40°F: 38.5, 39.2, 39.8 = 3 members
         count = sum(1 for t in sample_ensemble.member_highs if t < 40.0)
@@ -97,7 +97,7 @@ class TestCalculateBucketProbability:
             no_price=0.85,
         )
 
-        prob = calculate_bucket_probability(sample_ensemble, bucket)
+        prob = calculate_market_probability(sample_ensemble, bucket)
 
         # Count members >= 46°F: 46.2, 46.5 = 2 members
         count = sum(1 for t in sample_ensemble.member_highs if t >= 46.0)
@@ -201,7 +201,7 @@ class TestCalculateWeatherSignals:
             city="nyc",
             target_date=date(2026, 2, 20),
             resolution_source="test",
-            buckets=buckets,
+            markets=buckets,
         )
 
         signals = calculate_weather_signals(
@@ -239,7 +239,7 @@ class TestCalculateWeatherSignals:
             city="nyc",
             target_date=date(2026, 2, 20),
             resolution_source="test",
-            buckets=[bucket],
+            markets=[bucket],
         )
 
         signals = calculate_weather_signals(
@@ -273,7 +273,7 @@ class TestCalculateWeatherSignals:
             city="nyc",
             target_date=date(2026, 2, 20),
             resolution_source="test",
-            buckets=[bucket],
+            markets=[bucket],
         )
 
         # With conservative filter (50% min), should filter
@@ -308,7 +308,7 @@ class TestCalculateWeatherSignals:
             city="nyc",
             target_date=date(2026, 2, 20),
             resolution_source="test",
-            buckets=[bucket],
+            markets=[bucket],
         )
 
         signals = calculate_weather_signals(
@@ -342,7 +342,7 @@ class TestCalculateWeatherSignals:
             city="nyc",
             target_date=date(2026, 2, 20),
             resolution_source="test",
-            buckets=[bucket],
+            markets=[bucket],
         )
 
         signals = calculate_weather_signals(
@@ -384,7 +384,7 @@ class TestCalculateWeatherSignals:
             city="nyc",
             target_date=date(2026, 2, 20),
             resolution_source="test",
-            buckets=[bucket],
+            markets=[bucket],
         )
 
         signals = calculate_weather_signals(
@@ -398,8 +398,8 @@ class TestCalculateWeatherSignals:
         signal = signals[0]
         assert signal.metadata is not None
         assert signal.metadata["city"] == "nyc"
-        assert signal.metadata["bucket_low"] == 42.0
-        assert signal.metadata["bucket_high"] == 44.0
+        assert signal.metadata["market_low"] == 42.0
+        assert signal.metadata["market_high"] == 44.0
         assert "ensemble_std" in signal.metadata
 
 
