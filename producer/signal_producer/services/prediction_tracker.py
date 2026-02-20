@@ -39,7 +39,7 @@ class PredictionTracker:
         Returns:
             Number of predictions recorded
         """
-        from ..data.models import PredictionRecord
+        from ..models.models import PredictionRecord
         from ..strategies.weather.signals import calculate_market_probability
 
         recorded = 0
@@ -105,7 +105,7 @@ class PredictionTracker:
         Returns:
             Number of predictions resolved
         """
-        from ..data.models import PredictionRecord
+        from ..models.models import PredictionRecord
 
         predictions = session.query(PredictionRecord).filter(
             PredictionRecord.city == city,
@@ -161,7 +161,7 @@ class PredictionTracker:
         Returns:
             List of (probability, outcome) tuples for resolved predictions
         """
-        from ..data.models import PredictionRecord
+        from ..models.models import PredictionRecord
 
         query = session.query(
             PredictionRecord.raw_ensemble_prob,

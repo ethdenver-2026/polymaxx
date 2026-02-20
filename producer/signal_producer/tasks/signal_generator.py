@@ -4,15 +4,19 @@ Generates ProducerSignals by combining ensemble forecasts with market prices.
 """
 
 import asyncio
+import json
 from datetime import datetime, UTC
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from sqlalchemy.orm import Session
 
+from ..models.models import SignalRecord
 from ..signals.types import ProducerSignal, WeatherMetadata, PolymarketInfo
 from ..config import CITIES
 
 if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
     from ..registry.market_registry import MarketRegistry, CachedEvent, CachedMarket
     from ..strategies.weather.open_meteo import OpenMeteoClient
     from ..publishing.websocket import SignalBroadcaster
@@ -41,12 +45,14 @@ class SignalGeneratorTask:
         registry: "MarketRegistry",
         open_meteo_client: "OpenMeteoClient",
         broadcaster: "SignalBroadcaster | None" = None,
+        engine: "Engine | None" = None,
         edge_threshold: float = DEFAULT_EDGE_THRESHOLD,
         forecast_interval: int = DEFAULT_FORECAST_INTERVAL,
     ):
         self._registry = registry
         self._open_meteo = open_meteo_client
         self._broadcaster = broadcaster
+        self._engine = engine
         self._edge_threshold = edge_threshold
         self._forecast_interval = forecast_interval
         self._running = False
@@ -213,6 +219,37 @@ class SignalGeneratorTask:
 
         return signals
 
+    def _persist_signal(self, signal: ProducerSignal) -> None:
+        """Persist a ProducerSignal to the database."""
+        if not self._engine:
+            return
+
+        exchange = signal.exchanges[0] if signal.exchanges else {}
+
+        record = SignalRecord(
+            strategy="weather",
+            market_id=exchange.get("event_id", ""),
+            token_id=exchange.get("token_id", ""),
+            model_probability=signal.model_probability,
+            market_price=exchange.get("market_price", 0.0),
+            edge=exchange.get("edge", 0.0),
+            confidence=signal.confidence,
+            decision="signal",  # Generated signal, not yet traded
+            skip_reason=None,
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            metadata_json=json.dumps(signal.metadata),
+        )
+
+        session = Session(self._engine)
+        try:
+            session.add(record)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error("Failed to persist signal", error=str(e))
+        finally:
+            session.close()
+
     async def _generate_once(self) -> list[ProducerSignal]:
         """Run one signal generation cycle."""
         all_signals = []
@@ -223,9 +260,12 @@ class SignalGeneratorTask:
             signals = await self._generate_for_event(event)
             all_signals.extend(signals)
 
-            # Broadcast each signal
-            if self._broadcaster:
-                for signal in signals:
+            for signal in signals:
+                # Persist to database
+                self._persist_signal(signal)
+
+                # Broadcast via websocket
+                if self._broadcaster:
                     await self._broadcaster.broadcast_producer_signal(signal)
 
         if all_signals:
