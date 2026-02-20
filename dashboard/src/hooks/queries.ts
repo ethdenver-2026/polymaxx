@@ -56,7 +56,7 @@ export function useActivity(wallet: string | undefined) {
 export function useGenerateSignal() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: generateSignal,
+    mutationFn: (cities?: string[]) => generateSignal(cities),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["signals"] });
       qc.invalidateQueries({ queryKey: ["paperPositions"] });

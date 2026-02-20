@@ -1,4 +1,4 @@
-"""On-demand weather signal generator.
+"""On-demand weather signal generator (fallback when producer is offline).
 
 Fetches live Gamma API event + Open-Meteo ensemble forecast,
 calculates per-bucket probabilities, and returns the best-edge signal.
@@ -12,11 +12,30 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-NYC = {
-    "lat": 40.7128,
-    "lon": -74.0060,
-    "tz": "America/New_York",
-    "slug": "nyc",
+from .config import get_settings
+from .db import get_executed_notional_usd
+
+CITY_COORDS: dict[str, dict] = {
+    "nyc": {"lat": 40.7128, "lon": -74.0060, "tz": "America/New_York", "name": "New York"},
+    "chicago": {"lat": 41.8781, "lon": -87.6298, "tz": "America/Chicago", "name": "Chicago"},
+    "london": {"lat": 51.5074, "lon": -0.1278, "tz": "Europe/London", "name": "London"},
+    "miami": {"lat": 25.7617, "lon": -80.1918, "tz": "America/New_York", "name": "Miami"},
+    "dallas": {"lat": 32.7767, "lon": -96.7970, "tz": "America/Chicago", "name": "Dallas"},
+    "seattle": {"lat": 47.6062, "lon": -122.3321, "tz": "America/Los_Angeles", "name": "Seattle"},
+    "atlanta": {"lat": 33.7490, "lon": -84.3880, "tz": "America/New_York", "name": "Atlanta"},
+    "seoul": {"lat": 37.5665, "lon": 126.9780, "tz": "Asia/Seoul", "name": "Seoul"},
+    "paris": {"lat": 48.8566, "lon": 2.3522, "tz": "Europe/Paris", "name": "Paris"},
+    "toronto": {"lat": 43.6532, "lon": -79.3832, "tz": "America/Toronto", "name": "Toronto"},
+    "sao_paulo": {"lat": -23.5505, "lon": -46.6333, "tz": "America/Sao_Paulo", "name": "Sao Paulo"},
+    "wellington": {"lat": -41.2866, "lon": 174.7756, "tz": "Pacific/Auckland", "name": "Wellington"},
+    "buenos_aires": {"lat": -34.6037, "lon": -58.3816, "tz": "America/Argentina/Buenos_Aires", "name": "Buenos Aires"},
+    "ankara": {"lat": 39.9334, "lon": 32.8597, "tz": "Europe/Istanbul", "name": "Ankara"},
+}
+
+# Slug overrides for cities whose Polymarket slug differs from the key
+SLUG_OVERRIDES: dict[str, str] = {
+    "sao_paulo": "sao-paulo",
+    "buenos_aires": "buenos-aires",
 }
 
 
@@ -24,9 +43,9 @@ def _parse_bucket_bounds(question: str) -> tuple[float, float]:
     """Extract (low, high) from a market question string.
 
     Examples:
-      "... 31\u00b0F or below ..."  -> (-inf, 32)
-      "... 32-33\u00b0F ..."        -> (32, 34)
-      "... 46\u00b0F or higher ..." -> (46, inf)
+      "... 31°F or below ..."  -> (-inf, 32)
+      "... 32-33°F ..."        -> (32, 34)
+      "... 46°F or higher ..." -> (46, inf)
     """
     m = re.search(r"(\d+)\s*\u00b0F or below", question)
     if m:
@@ -60,7 +79,7 @@ async def _fetch_event(city_slug: str, target_date: datetime) -> dict | None:
 
 
 async def _fetch_ensemble(
-    lat: float, lon: float, target_date: datetime
+    lat: float, lon: float, tz: str, target_date: datetime
 ) -> list[float]:
     """Get daily high temps from all 31 ensemble members for target_date."""
     params = {
@@ -69,7 +88,7 @@ async def _fetch_ensemble(
         "models": "gfs_seamless",
         "hourly": "temperature_2m",
         "temperature_unit": "fahrenheit",
-        "timezone": "America/New_York",
+        "timezone": tz,
         "forecast_days": 7,
     }
     async with httpx.AsyncClient(timeout=15) as client:
@@ -109,30 +128,44 @@ async def generate_signal(
 
     Returns dict with keys: signal_data, response (ready for db.log_signal).
     """
+    city = CITY_COORDS.get(city_slug)
+    if city is None:
+        return {
+            "signal_data": {"description": f"Unknown city: {city_slug}", "token_id": "", "side": "buy"},
+            "response": {"action": "error", "errors": [f"unknown_city:{city_slug}"]},
+        }
+
+    # Use slug override if the Polymarket slug differs from our key
+    pm_slug = SLUG_OVERRIDES.get(city_slug, city_slug)
+
     if target_date is None:
         target_date = datetime.now(timezone.utc) + timedelta(days=1)
 
-    event = await _fetch_event(city_slug, target_date)
+    city_label = f"{city['name']} ({target_date.strftime('%b %d')})"
+
+    event = await _fetch_event(pm_slug, target_date)
     if event is None:
         return {
-            "signal_data": {},
-            "response": {
-                "action": "error",
-                "errors": ["no_event_found"],
-            },
+            "signal_data": {"description": f"No event found: {city_label}", "token_id": "", "side": "buy"},
+            "response": {"action": "error", "errors": ["no_event_found"]},
         }
 
     ensemble_highs = await _fetch_ensemble(
-        NYC["lat"], NYC["lon"], target_date
+        city["lat"], city["lon"], city["tz"], target_date
     )
     if not ensemble_highs:
         return {
-            "signal_data": {},
-            "response": {
-                "action": "error",
-                "errors": ["no_ensemble_data"],
-            },
+            "signal_data": {"description": f"No forecast data: {city_label}", "token_id": "", "side": "buy"},
+            "response": {"action": "error", "errors": ["no_ensemble_data"]},
         }
+
+    settings = get_settings()
+    edge_threshold = settings.edge_threshold_pct / 100.0
+    bankroll = settings.bankroll_usdc
+    max_pos = settings.max_position_usd
+    min_pos = settings.min_position_usd
+    executed_notional = get_executed_notional_usd()
+    available_balance = max(0.0, bankroll - executed_notional)
 
     n = len(ensemble_highs)
     best_edge = -999.0
@@ -175,14 +208,82 @@ async def generate_signal(
                 },
             }
 
-    if best_signal is None or best_edge <= 0:
+    # --- Strategy checks (mirrors consumer_engine / signal_pipeline logic) ---
+
+    if best_signal is None:
         return {
-            "signal_data": {},
+            "signal_data": {"description": f"No parseable buckets: {city_label}", "token_id": "", "side": "buy"},
+            "response": {
+                "action": "error",
+                "signal_price": None,
+                "live_price": None,
+                "signal_edge": None,
+                "live_edge": None,
+                "order_id": None,
+                "errors": ["no_parseable_buckets"],
+            },
+        }
+
+    if best_edge <= 0:
+        return {
+            "signal_data": best_signal,
             "response": {
                 "action": "skipped",
+                "signal_price": best_signal["market_price"],
+                "live_price": best_signal["market_price"],
+                "signal_edge": best_signal["edge"],
+                "live_edge": best_signal["edge"],
+                "order_id": None,
                 "errors": ["no_positive_edge"],
             },
         }
+
+    if best_edge < edge_threshold:
+        return {
+            "signal_data": best_signal,
+            "response": {
+                "action": "skipped",
+                "signal_price": best_signal["market_price"],
+                "live_price": best_signal["market_price"],
+                "signal_edge": best_signal["edge"],
+                "live_edge": best_signal["edge"],
+                "order_id": None,
+                "errors": ["edge_below_threshold"],
+            },
+        }
+
+    if available_balance <= 0:
+        return {
+            "signal_data": best_signal,
+            "response": {
+                "action": "skipped",
+                "signal_price": best_signal["market_price"],
+                "live_price": best_signal["market_price"],
+                "signal_edge": best_signal["edge"],
+                "live_edge": best_signal["edge"],
+                "order_id": None,
+                "errors": ["insufficient_balance"],
+            },
+        }
+
+    # Position sizing (edge-scaled, capped)
+    edge_fraction = min(max(best_edge, 0.0), 0.20)
+    position_usd = min(available_balance * edge_fraction, max_pos, available_balance)
+    if position_usd < min_pos:
+        return {
+            "signal_data": best_signal,
+            "response": {
+                "action": "skipped",
+                "signal_price": best_signal["market_price"],
+                "live_price": best_signal["market_price"],
+                "signal_edge": best_signal["edge"],
+                "live_edge": best_signal["edge"],
+                "order_id": None,
+                "errors": ["position_below_minimum"],
+            },
+        }
+
+    best_signal["position_size_usd"] = round(position_usd, 2)
 
     return {
         "signal_data": best_signal,
