@@ -29,8 +29,8 @@ from py_clob_client.order_builder.constants import BUY, SELL
 
 from .polymarket import init_client
 
-# Polymarket minimum order value in USD
-MIN_ORDER_USD = 1.0
+# Polymarket minimum order size
+MIN_ORDER_SIZE = 5
 
 
 @dataclass
@@ -118,10 +118,9 @@ def simulate_order(
     tick_size = "0.01"
     neg_risk = False
 
-    min_size = MIN_ORDER_USD / price if price > 0 else 0
-    if size < min_size:
-        errors.append(f"Size {size:.1f} below minimum (${MIN_ORDER_USD:.0f} worth = {min_size:.1f} shares), adjusting")
-        size = min_size
+    if size < MIN_ORDER_SIZE:
+        errors.append(f"Size {size} below Polymarket minimum ({MIN_ORDER_SIZE}), adjusting to {MIN_ORDER_SIZE}")
+        size = float(MIN_ORDER_SIZE)
 
     side_const = BUY if side.lower() == "buy" else SELL
 
