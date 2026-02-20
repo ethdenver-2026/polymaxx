@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from typing import Literal
 
 from pydantic import Field
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     }
 
 
+@functools.lru_cache
 def get_settings() -> Settings:
     return Settings()
 
