@@ -5,7 +5,7 @@ This is the wire format: the producer emits Signal objects (as JSON),
 and the consumer reads them to decide whether to execute trades.
 """
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -59,9 +59,9 @@ class Signal(BaseModel):
     confidence: float = Field(ge=0, le=1, description="Model confidence score")
 
     # Sizing recommendation
-    position_size_usd: float = Field(ge=0, description="Recommended position in USD")
+    position_size_usd: float = Field(gt=0, description="Recommended position in USD")
     expected_value: float = Field(description="Expected profit in USD")
 
     # Metadata
     metadata: SignalMetadata | None = None
-    produced_at: datetime = Field(default_factory=datetime.utcnow)
+    produced_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -24,7 +24,7 @@ logger = logging.getLogger("signal_consumer.run")
 def _run_api(host: str, port: int) -> None:
     """Run the FastAPI server in a background thread."""
     uvicorn.run(
-        "signal_consumer.api:app",
+        "signal_consumer.dashboard_api:app",
         host=host,
         port=port,
         log_level="info",
