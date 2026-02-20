@@ -8,11 +8,45 @@ Stores every signal received by the consumer along with the action taken
 from __future__ import annotations
 
 import json
+import queue
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "consumer_signals.db"
+
+# Thread-safe pub/sub for live signal updates.
+# Subscribers are queue.Queue instances — one per SSE connection.
+_subscribers: list[queue.Queue[dict]] = []
+_subscribers_lock = threading.Lock()
+
+
+def subscribe() -> queue.Queue[dict]:
+    """Add a subscriber queue. Returns the queue to read from."""
+    q: queue.Queue[dict] = queue.Queue(maxsize=64)
+    with _subscribers_lock:
+        _subscribers.append(q)
+    return q
+
+
+def unsubscribe(q: queue.Queue[dict]) -> None:
+    """Remove a subscriber queue."""
+    with _subscribers_lock:
+        try:
+            _subscribers.remove(q)
+        except ValueError:
+            pass
+
+
+def _notify(signal_row: dict) -> None:
+    """Push to all subscriber queues (non-blocking, drops if full)."""
+    with _subscribers_lock:
+        for q in _subscribers:
+            try:
+                q.put_nowait(signal_row)
+            except queue.Full:
+                pass
 
 
 def init_db() -> None:
@@ -38,9 +72,10 @@ def init_db() -> None:
 
 
 def log_signal(signal_data: dict, response: dict) -> None:
-    """Persist a signal and its processing result."""
+    """Persist a signal and its processing result, then notify subscribers."""
+    now = time.time()
     conn = sqlite3.connect(str(DB_PATH))
-    conn.execute(
+    cur = conn.execute(
         """
         INSERT INTO consumer_signal_log
             (received_at, signal_json, action, signal_price, live_price,
@@ -48,7 +83,7 @@ def log_signal(signal_data: dict, response: dict) -> None:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            time.time(),
+            now,
             json.dumps(signal_data),
             response.get("action", "unknown"),
             response.get("signal_price"),
@@ -60,7 +95,16 @@ def log_signal(signal_data: dict, response: dict) -> None:
         ),
     )
     conn.commit()
+    row_id = cur.lastrowid
     conn.close()
+
+    # Notify SSE subscribers
+    _notify({
+        "id": row_id,
+        "received_at": now,
+        "action": response.get("action", "unknown"),
+        "description": signal_data.get("description", ""),
+    })
 
 
 def get_signals(limit: int = 100) -> list[dict]:
