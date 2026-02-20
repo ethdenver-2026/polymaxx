@@ -17,10 +17,15 @@ from starlette.responses import StreamingResponse
 
 from pydantic import BaseModel
 
+import httpx
+import structlog
+
 from .balances import get_balances
 from .config import get_settings, get_trading_mode, set_trading_mode
 from .db import get_paper_positions, get_signals, log_signal, subscribe, unsubscribe
 from .signal_generator import generate_signal
+
+logger = structlog.get_logger()
 
 app = FastAPI(title="Signal Consumer Dashboard API", version="0.1.0")
 
@@ -118,19 +123,61 @@ def paper_positions():
     return get_paper_positions()
 
 
-@app.post("/api/generate-signal")
-async def generate_signal_endpoint():
-    """Generate a weather signal on demand from live APIs."""
-    result = await generate_signal()
-    signal_data = result["signal_data"]
-    response = result["response"]
+class GenerateSignalRequest(BaseModel):
+    cities: list[str] | None = None
 
-    if signal_data:
+
+@app.post("/api/generate-signal")
+async def generate_signal_endpoint(body: GenerateSignalRequest | None = None):
+    """Generate signals — tries producer first, falls back to local generator."""
+    cities = body.cities if body and body.cities else ["nyc", "chicago"]
+
+    # --- Try producer first ---
+    s = get_settings()
+    producer_http = s.producer_ws_url.replace("ws://", "http://").replace("wss://", "https://")
+    producer_http = producer_http.split("/ws/")[0]
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{producer_http}/run-once",
+                params={"cities": ",".join(cities)},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return {
+            "ok": True,
+            "signals_found": data.get("signals_found", 0),
+            "source": "producer",
+            "errors": [],
+        }
+    except (httpx.ConnectError, httpx.HTTPStatusError):
+        logger.info("Producer unreachable, falling back to local generator", cities=cities)
+
+    # --- Fallback: local signal generator per city ---
+    total_logged = 0
+    all_errors: list[str] = []
+
+    for city in cities:
+        try:
+            result = await generate_signal(city_slug=city)
+        except Exception as exc:
+            all_errors.append(f"{city}:{exc}")
+            continue
+
+        signal_data = result["signal_data"]
+        response = result["response"]
+
+        # Always log so every attempt shows in the signal feed
         log_signal(signal_data, response)
+        total_logged += 1
+
+        if response.get("errors"):
+            all_errors.extend(f"{city}:{e}" for e in response["errors"])
 
     return {
-        "ok": response["action"] not in ("error",),
-        "action": response["action"],
-        "signal": signal_data or None,
-        "errors": response.get("errors", []),
+        "ok": total_logged > 0,
+        "signals_found": total_logged,
+        "source": "local",
+        "errors": all_errors,
     }

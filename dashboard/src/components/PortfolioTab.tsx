@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   useBalances,
   usePortfolioValue,
@@ -10,6 +11,23 @@ import {
   usePaperPositions,
 } from "@/hooks/queries";
 import { PnLChart } from "./PnLChart";
+
+const CITIES = [
+  { value: "nyc", label: "NYC" },
+  { value: "chicago", label: "Chicago" },
+  { value: "miami", label: "Miami" },
+  { value: "dallas", label: "Dallas" },
+  { value: "seattle", label: "Seattle" },
+  { value: "atlanta", label: "Atlanta" },
+  { value: "london", label: "London" },
+  { value: "paris", label: "Paris" },
+  { value: "toronto", label: "Toronto" },
+  { value: "seoul", label: "Seoul" },
+  { value: "sao_paulo", label: "Sao Paulo" },
+  { value: "wellington", label: "Wellington" },
+  { value: "buenos_aires", label: "Buenos Aires" },
+  { value: "ankara", label: "Ankara" },
+] as const;
 
 interface PortfolioTabProps {
   wallet: string;
@@ -24,6 +42,7 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
   const { data: config } = useConfig();
   const genSignal = useGenerateSignal();
   const toggleMode = useSetTradingMode();
+  const [selectedCity, setSelectedCity] = useState<string>("all");
 
   // Computed from real data — don't trust the Data API's portfolio value
   const clobBalance = balances?.polymarket_usdc ?? 0;
@@ -316,13 +335,25 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
               Recent Signals
             </span>
             {!isLive && (
-              <button
-                onClick={() => genSignal.mutate()}
-                disabled={genSignal.isPending}
-                className="px-2.5 py-1 text-[10px] uppercase tracking-wider font-semibold rounded border transition-colors bg-signal-green/10 text-signal-green border-signal-green/30 hover:bg-signal-green/20 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {genSignal.isPending ? "Generating\u2026" : "Generate Signal"}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={selectedCity}
+                  onChange={(e) => setSelectedCity(e.target.value)}
+                  className="h-6 px-1.5 text-[10px] rounded border border-[#1e2235] bg-[#0c0e14] text-foreground outline-none"
+                >
+                  <option value="all">All Cities</option>
+                  {CITIES.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => genSignal.mutate(selectedCity === "all" ? undefined : [selectedCity])}
+                  disabled={genSignal.isPending}
+                  className="px-2.5 py-1 text-[10px] uppercase tracking-wider font-semibold rounded border transition-colors bg-signal-green/10 text-signal-green border-signal-green/30 hover:bg-signal-green/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {genSignal.isPending ? "Generating\u2026" : "Generate Signal"}
+                </button>
+              </div>
             )}
           </div>
 
@@ -355,7 +386,7 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
                   </div>
                   <span
                     className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${
-                      s.action === "executed"
+                      s.action === "executed" || s.action === "simulated"
                         ? "bg-signal-green/15 text-signal-green border-signal-green/30"
                         : s.action === "skipped"
                           ? "bg-signal-amber/15 text-signal-amber border-signal-amber/30"

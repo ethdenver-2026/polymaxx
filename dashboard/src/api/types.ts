@@ -109,14 +109,6 @@ export interface PaperPosition {
 
 export interface GenerateSignalResponse {
   ok: boolean;
-  action: string;
-  signal: {
-    token_id: string;
-    side: string;
-    model_probability: number;
-    market_price: number;
-    edge: number;
-    description: string;
-  } | null;
+  signals_found: number;
   errors: string[];
 }
