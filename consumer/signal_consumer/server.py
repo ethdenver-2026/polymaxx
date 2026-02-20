@@ -37,15 +37,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import logging
 
 import websockets
 from dotenv import load_dotenv
 
-from .execute_order import execute_order, MIN_ORDER_SIZE
-from .strategy import run_strategy
-from .db import log_signal
+from .strategy import WeatherStrategy
 
 logger = logging.getLogger("signal_consumer.server")
 
@@ -96,45 +93,28 @@ async def _handle_signal(websocket):
                 await websocket.send(json.dumps(response))
                 continue
 
-            # Run strategy checks in a thread (py-clob-client is synchronous)
+            # Run strategy pipeline in a thread (py-clob-client is synchronous)
+            strategy = WeatherStrategy()
             loop = asyncio.get_event_loop()
             strategy_result = await loop.run_in_executor(
-                None, lambda: run_strategy(data)
+                None, lambda: strategy.process(data)
             )
 
-            strategy_checks = strategy_result.checks_as_dicts()
-
+            # Build response from result (DB logging happens inside process())
             if strategy_result.should_trade:
-                # Strategy passed — execute the order
-                side = data.get("side", "buy")
-                size = strategy_result.adjusted_position_usd / strategy_result.adjusted_price
-                if size < MIN_ORDER_SIZE:
-                    size = float(MIN_ORDER_SIZE)
-
-                exec_result = await loop.run_in_executor(
-                    None,
-                    lambda: execute_order(
-                        token_id=data["token_id"],
-                        side=side,
-                        price=strategy_result.adjusted_price,
-                        size=size,
-                    ),
-                )
-
-                action = "executed" if exec_result.success else "error"
+                action = "executed" if strategy_result.order_id else "error"
                 response = {
                     "action": action,
                     "signal_price": data["market_price"],
                     "live_price": strategy_result.adjusted_price,
                     "signal_edge": strategy_result.signal_edge,
                     "live_edge": strategy_result.live_edge,
-                    "order_id": exec_result.order_id,
-                    "status": exec_result.status,
-                    "errors": exec_result.errors,
-                    "strategy_checks": strategy_checks,
+                    "order_id": strategy_result.order_id,
+                    "status": strategy_result.order_status,
+                    "errors": strategy_result.order_errors,
+                    "strategy_checks": strategy_result.checks_as_dicts(),
                 }
             else:
-                # Strategy rejected the signal
                 action = "skipped"
                 response = {
                     "action": action,
@@ -145,7 +125,7 @@ async def _handle_signal(websocket):
                     "order_id": None,
                     "status": None,
                     "errors": [strategy_result.skip_reason] if strategy_result.skip_reason else [],
-                    "strategy_checks": strategy_checks,
+                    "strategy_checks": strategy_result.checks_as_dicts(),
                 }
 
             logger.info(
@@ -155,12 +135,6 @@ async def _handle_signal(websocket):
                 response.get("order_id") or "none",
                 strategy_result.skip_reason or "n/a",
             )
-
-            # Persist signal + response to SQLite
-            try:
-                log_signal(data, response)
-            except Exception:
-                logger.exception("Failed to log signal to database")
 
             await websocket.send(json.dumps(response))
 

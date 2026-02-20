@@ -33,7 +33,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
-from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import (
     OrderArgs,
     OrderType,
@@ -41,6 +40,7 @@ from py_clob_client.clob_types import (
 )
 from py_clob_client.order_builder.constants import BUY, SELL
 
+from .polymarket import init_client, get_live_price
 from .simulate_order import SimulationResult, simulate_order
 
 # Polymarket minimum order size
@@ -103,45 +103,6 @@ class ExecutionResult:
         }
 
 
-def _init_client() -> ClobClient:
-    """Initialize a ClobClient from environment variables."""
-    private_key = os.environ.get("POLYMARKET_PRIVATE_KEY")
-    if not private_key:
-        raise RuntimeError("POLYMARKET_PRIVATE_KEY not set")
-
-    wallet_address = os.environ.get("POLYMARKET_WALLET_ADDRESS", "")
-    host = os.environ.get("CLOB_API_URL", "https://clob.polymarket.com")
-    chain_id = int(os.environ.get("CHAIN_ID", "137"))
-    sig_type = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2"))
-
-    # Always derive creds from private key to avoid stale env vars
-    temp_client = ClobClient(host, key=private_key, chain_id=chain_id)
-    creds = temp_client.create_or_derive_api_creds()
-
-    return ClobClient(
-        host,
-        key=private_key,
-        chain_id=chain_id,
-        creds=creds,
-        signature_type=sig_type,
-        funder=wallet_address or None,
-    )
-
-
-def _get_live_price(client: ClobClient, token_id: str, side: str) -> float | None:
-    """Fetch the current best price from the orderbook for the given side."""
-    try:
-        book = client.get_order_book(token_id)
-        if side.lower() == "buy":
-            asks = book.asks if book.asks else []
-            return float(asks[0].price) if asks else None
-        else:
-            bids = book.bids if book.bids else []
-            return float(bids[0].price) if bids else None
-    except Exception:
-        return None
-
-
 def _round_to_tick(price: float, tick_size: str) -> float:
     """Round a price down to the nearest valid tick."""
     tick = float(tick_size)
@@ -200,7 +161,7 @@ def execute_order(
 
     # --- Step 2: Execute ---
     try:
-        client = _init_client()
+        client = init_client()
     except Exception as e:
         return ExecutionResult(
             success=False,
@@ -257,24 +218,20 @@ def execute_order(
         )
 
 
-def execute_signal_data(
-    data: dict,
+def execute_signal(
+    signal_path: str,
     order_type: str = "GTC",
     skip_simulation: bool = False,
     edge_threshold: float | None = None,
 ) -> ExecutionResult:
-    """
-    Execute a trade from a signal dict with live price validation.
+    """Execute a trade from a signal JSON file with live price validation.
 
-    1. Reads signal fields (model_probability, market_price, edge, etc.)
-    2. Fetches live price from CLOB orderbook
-    3. Recalculates edge with live price
-    4. Skips if edge has fallen below threshold
-    5. Simulates and executes at the live price
+    Uses the shared polymarket utilities for client init and live price fetch.
     """
     if edge_threshold is None:
         edge_threshold = float(os.environ.get("EDGE_THRESHOLD_PCT", "8")) / 100
 
+    data = json.loads(Path(signal_path).read_text())
     token_id = data["token_id"]
     side = data.get("side", "buy")
     signal_price = data["market_price"]
@@ -282,9 +239,9 @@ def execute_signal_data(
     signal_edge = data.get("edge", model_prob - signal_price)
     position_size_usd = data["position_size_usd"]
 
-    # --- Fetch live price ---
+    # Fetch live price
     try:
-        client = _init_client()
+        client = init_client()
     except Exception as e:
         sim = SimulationResult(
             success=False, token_id=token_id, side=side, price=signal_price,
@@ -300,13 +257,10 @@ def execute_signal_data(
             signal_edge=signal_edge, live_edge=None,
         )
 
-    live_price = _get_live_price(client, token_id, side)
-
+    live_price = get_live_price(client, token_id, side)
     if live_price is None:
-        # No liquidity on the book — fall back to signal price
         live_price = signal_price
 
-    # --- Recalculate edge with live price ---
     live_edge = model_prob - live_price
 
     if live_edge < edge_threshold:
@@ -324,12 +278,10 @@ def execute_signal_data(
             signal_edge=signal_edge, live_edge=live_edge,
         )
 
-    # --- Compute order params at live price ---
     size = position_size_usd / live_price
     if size < MIN_ORDER_SIZE:
         size = float(MIN_ORDER_SIZE)
 
-    # --- Execute at live price ---
     result = execute_order(
         token_id=token_id,
         side=side,
@@ -338,25 +290,11 @@ def execute_signal_data(
         order_type=order_type,
         skip_simulation=skip_simulation,
     )
-
-    # Attach signal context to the result
     result.signal_price = signal_price
     result.live_price = live_price
     result.signal_edge = signal_edge
     result.live_edge = live_edge
-
     return result
-
-
-def execute_signal(
-    signal_path: str,
-    order_type: str = "GTC",
-    skip_simulation: bool = False,
-    edge_threshold: float | None = None,
-) -> ExecutionResult:
-    """Execute a trade from a signal JSON file. Delegates to execute_signal_data."""
-    data = json.loads(Path(signal_path).read_text())
-    return execute_signal_data(data, order_type, skip_simulation, edge_threshold)
 
 
 def _parse_signal_file(path: str) -> dict:
