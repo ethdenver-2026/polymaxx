@@ -272,7 +272,7 @@ curl "https://clob.polymarket.com/prices-history?market=TOKEN_ID&interval=1d&fid
 
 _Source: <https://docs.polymarket.com/developers/CLOB/websocket/market-channel>_
 
-**URL:** `wss://ws-subscriptions-clob.polymarket.com/ws/`
+**URL:** `wss://ws-subscriptions-clob.polymarket.com/ws/market`
 
 ### Market Channel (Public — No Auth)
 
@@ -280,20 +280,27 @@ Subscribe to real-time orderbook and price updates:
 
 ```json
 {
-  "type": "subscribe",
-  "channel": "market",
-  "assets_id": "TOKEN_ID"
+  "assets_ids": ["TOKEN_ID_1", "TOKEN_ID_2"],
+  "type": "market",
+  "custom_feature_enabled": true
 }
 ```
 
+Set `custom_feature_enabled: true` to receive additional event types.
+
 **Event types received:**
 
-| Event | Description |
-|---|---|
-| `book` | Full orderbook snapshot |
-| `price_change` | Price update (structure changed Sep 15, 2025 — see changelog) |
-| `tick_size_change` | Tick size change (triggers when price > 0.96 or < 0.04) |
-| `last_trade_price` | Last trade price update |
+| Event | Description | Requires custom_feature_enabled |
+|---|---|---|
+| `book` | Full orderbook snapshot (on subscribe and after trades) | No |
+| `price_change` | Price update when orders placed/cancelled | No |
+| `tick_size_change` | Tick size change (triggers when price > 0.96 or < 0.04) | No |
+| `last_trade_price` | Last trade price when maker/taker match | No |
+| `best_bid_ask` | Best bid/ask price changes | Yes |
+| `new_market` | New market launched | Yes |
+| `market_resolved` | Market resolution event | Yes |
+
+Each message includes an `event_type` field identifying the event.
 
 ### User Channel (Authenticated)
 
@@ -318,27 +325,35 @@ Low-latency data stream optimized for market makers. Includes:
 
 ## Fees
 
-_Source: <https://docs.polymarket.com/developers/CLOB/introduction>_
+_Source: <https://docs.polymarket.com/trading/fees>_
+
+### Overview
+
+Most Polymarket markets are **completely fee-free**. Taker fees apply only to specific market types and are redistributed to market makers as rebates.
 
 ### Fee Formula
 
-Fees apply symmetrically in output assets:
+```
+fee = C × feeRate × (p × (1 - p))^exponent
+```
 
-- **Selling tokens for USDC:** `fee = baseRate × min(price, 1-price) × size`
-- **Buying tokens with USDC:** `fee = baseRate × min(price, 1-price) × size / price`
+Where:
+- **C** = number of shares traded
+- **p** = share price
+- **feeRate** and **exponent** vary by market type
 
-### Current Fee Schedule
+### Fee Parameters by Market Type
 
-_Source: <https://docs.polymarket.com/changelog/changelog>_
+| Market Type | Fee Rate | Exponent | Peak Fee (at p=0.5) | Maker Rebate |
+|---|---|---|---|---|
+| Default | 0 | — | 0% | — |
+| 5-min & 15-min crypto | 0.25 | 2 | 1.56% | 20% |
+| Sports (NCAAB, Serie A) | 0.0175 | 1 | 0.44% | 25% |
 
-| Market Type | Maker Fee | Taker Fee |
-|---|---|---|
-| Default | 0 bps | 0 bps |
-| 15-min crypto markets | 0 bps | Up to 1.56% (peaks at 50% probability) |
-| 5-min crypto markets | 0 bps | Up to 1.56% (peaks at 50% probability) |
-| Some sports (NCAAB, Serie A, etc.) | 0 bps | Taker fees enabled |
-
-**Maker Rebates:** Liquidity providers can earn daily USDC rebates funded by taker fees on markets where fees are enabled.
+**Notes:**
+- Fees decrease symmetrically toward price extremes (0 or 1)
+- Minimum fee charged: **0.0001 USDC** (smaller amounts round to zero)
+- No separate maker fees—only taker fees with daily rebate distributions
 
 Check `maker_base_fee` and `taker_base_fee` on market objects or use `GET /fee-rate` for current rates.
 

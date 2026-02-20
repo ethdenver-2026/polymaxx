@@ -37,6 +37,82 @@ class Observation(Base):
     )
 
 
+class TrackedEvent(Base):
+    """
+    A weather event being tracked by the producer.
+
+    Events transition through: active -> resolved/expired (never deleted).
+    """
+
+    __tablename__ = "tracked_events"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(String(100), nullable=False, unique=True, index=True)
+    title = Column(Text, nullable=False)
+    city = Column(String(50), nullable=False, index=True)
+    target_date = Column(Date, nullable=False, index=True)
+    resolution_source = Column(Text)  # e.g., wunderground URL
+
+    # Lifecycle
+    status = Column(String(20), nullable=False, index=True)  # 'active', 'resolved', 'expired'
+    resolved_at = Column(DateTime)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TrackedMarket(Base):
+    """
+    A temperature range market within an event.
+
+    Each market has YES/NO tokens and tracks current price.
+    """
+
+    __tablename__ = "tracked_markets"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey('tracked_events.id'), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    low_temp = Column(Float)  # None for "X or below"
+    high_temp = Column(Float)  # None for "X or above"
+    yes_token_id = Column(String(100), nullable=False, index=True)
+    no_token_id = Column(String(100), nullable=False)
+    active = Column(Boolean, nullable=False, default=True)
+
+    # Current prices (updated via CLOB websocket, in-memory cache is primary)
+    yes_price = Column(Float)
+    no_price = Column(Float)
+    price_timestamp = Column(DateTime)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class TrackedForecast(Base):
+    """
+    Ensemble forecast data for an event.
+
+    Latest forecast is used for signal generation.
+    """
+
+    __tablename__ = "tracked_forecasts"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey('tracked_events.id'), nullable=False, index=True)
+    forecast_source = Column(String(20), nullable=False)  # 'open_meteo', 'noaa'
+    forecast_time = Column(DateTime, nullable=False)
+
+    # Ensemble stats
+    ensemble_mean = Column(Float, nullable=False)
+    ensemble_std = Column(Float)
+    ensemble_min = Column(Float)
+    ensemble_max = Column(Float)
+
+    # Raw member data (stored as JSON for flexibility)
+    member_highs_json = Column(Text)  # JSON array of 31 floats
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class PredictionRecord(Base):
     """Track every bucket probability prediction and its outcome.
 

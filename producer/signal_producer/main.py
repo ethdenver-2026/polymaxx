@@ -153,6 +153,7 @@ def main():
         help="Show detailed signal information",
     )
     parser.add_argument("--serve", action="store_true", help="Run websocket server instead of a single cycle")
+    parser.add_argument("--producer", action="store_true", help="Run continuous producer (event discovery + signal generation)")
     parser.add_argument(
         "--host",
         type=str,
@@ -165,8 +166,32 @@ def main():
         default=8000,
         help="Port to bind websocket server",
     )
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default="data/producer.db",
+        help="Database path for producer mode",
+    )
 
     args = parser.parse_args()
+
+    # Ensure data directory exists
+    os.makedirs("data", exist_ok=True)
+
+    if args.producer:
+        from .tasks import run_producer
+
+        cities = None
+        if args.cities:
+            cities = [c.strip() for c in args.cities.split(",")]
+
+        logger.info(
+            "Starting producer",
+            cities=cities or "all",
+            db_path=args.db_path,
+        )
+        asyncio.run(run_producer(db_path=args.db_path, cities=cities))
+        return
 
     if args.serve:
         from .ws_server import run_signal_server
@@ -178,9 +203,6 @@ def main():
     cities = None
     if args.cities:
         cities = [c.strip() for c in args.cities.split(",")]
-
-    # Ensure data directory exists
-    os.makedirs("data", exist_ok=True)
 
     # Run trading cycle
     signals = asyncio.run(run_once(cities=cities))

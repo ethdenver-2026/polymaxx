@@ -7,8 +7,8 @@ from datetime import date
 
 
 @dataclass
-class WeatherBucket:
-    """A single temperature bucket market."""
+class WeatherMarket:
+    """A single temperature range market."""
 
     question: str
     low_temp: float | None  # None for "X or below"
@@ -21,7 +21,7 @@ class WeatherBucket:
     closed: bool
 
     def contains_temp(self, temp: float) -> bool:
-        """Check if a temperature falls within this bucket."""
+        """Check if a temperature falls within this market range."""
         if self.low_temp is None:
             return temp < self.high_temp
         if self.high_temp is None:
@@ -31,20 +31,31 @@ class WeatherBucket:
 
 @dataclass
 class WeatherEvent:
-    """A weather prediction event with multiple temperature buckets."""
+    """A weather prediction event with multiple temperature markets."""
 
     event_id: str
     title: str
     city: str
     target_date: date
     resolution_source: str
-    buckets: list[WeatherBucket]
+    markets: list[WeatherMarket]
     closed: bool
 
     @property
-    def active_buckets(self) -> list[WeatherBucket]:
-        """Return only active, non-closed buckets."""
-        return [b for b in self.buckets if b.active and not b.closed]
+    def active_markets(self) -> list[WeatherMarket]:
+        """Return only active, non-closed markets."""
+        return [m for m in self.markets if m.active and not m.closed]
+
+    # Backwards compatibility aliases
+    @property
+    def buckets(self) -> list[WeatherMarket]:
+        """Deprecated: Use markets instead."""
+        return self.markets
+
+    @property
+    def active_buckets(self) -> list[WeatherMarket]:
+        """Deprecated: Use active_markets instead."""
+        return self.active_markets
 
 
 def _celsius_to_fahrenheit(c: float) -> float:
@@ -107,24 +118,24 @@ def parse_temp_range(question: str) -> tuple[float | None, float | None]:
 
 def parse_weather_event(data: dict, city: str, target_date: date) -> WeatherEvent:
     """Parse Gamma API event JSON into WeatherEvent."""
-    buckets = []
+    weather_markets = []
 
-    for market in data.get("markets", []):
-        question = market.get("question", "")
+    for market_data in data.get("markets", []):
+        question = market_data.get("question", "")
         low, high = parse_temp_range(question)
 
         # Parse JSON strings (CRITICAL: these are JSON strings, not arrays)
         try:
-            prices = json.loads(market.get("outcomePrices", "[]"))
-            tokens = json.loads(market.get("clobTokenIds", "[]"))
+            prices = json.loads(market_data.get("outcomePrices", "[]"))
+            tokens = json.loads(market_data.get("clobTokenIds", "[]"))
         except json.JSONDecodeError:
             continue
 
         if len(prices) < 2 or len(tokens) < 2:
             continue
 
-        buckets.append(
-            WeatherBucket(
+        weather_markets.append(
+            WeatherMarket(
                 question=question,
                 low_temp=low,
                 high_temp=high,
@@ -132,8 +143,8 @@ def parse_weather_event(data: dict, city: str, target_date: date) -> WeatherEven
                 no_price=float(prices[1]),
                 yes_token_id=tokens[0],
                 no_token_id=tokens[1],
-                active=market.get("active", True),
-                closed=market.get("closed", False),
+                active=market_data.get("active", True),
+                closed=market_data.get("closed", False),
             )
         )
 
@@ -143,6 +154,6 @@ def parse_weather_event(data: dict, city: str, target_date: date) -> WeatherEven
         city=city,
         target_date=target_date,
         resolution_source=data.get("resolutionSource", ""),
-        buckets=buckets,
+        markets=weather_markets,
         closed=data.get("closed", False),
     )
