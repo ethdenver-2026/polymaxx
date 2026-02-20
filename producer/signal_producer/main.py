@@ -5,8 +5,10 @@ import asyncio
 import os
 
 import structlog
+import uvicorn
 
 from .config import get_settings, DEFAULT_CITIES
+from .publishing.websocket import broadcaster
 from .strategies.weather import WeatherStrategy
 from .trading.executor import TradeExecutor
 
@@ -59,6 +61,10 @@ async def run_once(cities: list[str] | None = None) -> list:
         for error in result.errors:
             logger.warning("Strategy error", error=error)
 
+    # Publish signals to websocket subscribers before execution.
+    for signal in result.signals:
+        await broadcaster.broadcast_signal(signal)
+
     # Execute trades
     trades_executed = 0
     for signal in result.signals:
@@ -76,7 +82,10 @@ async def run_once(cities: list[str] | None = None) -> list:
 
 
 def main():
-    """Main entry point with CLI argument parsing."""
+    """Main entry point with CLI argument parsing.
+
+    Default behavior starts the websocket server. Use --run-once for a single cycle.
+    """
     parser = argparse.ArgumentParser(description="Polymarket Weather Prediction Bot")
 
     parser.add_argument(
@@ -89,30 +98,53 @@ def main():
         action="store_true",
         help="Show detailed signal information",
     )
+    parser.add_argument(
+        "--run-once",
+        action="store_true",
+        help="Run one cycle and exit instead of starting websocket server",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="Host to bind websocket server",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind websocket server",
+    )
 
     args = parser.parse_args()
 
-    # Parse cities
-    cities = None
-    if args.cities:
-        cities = [c.strip() for c in args.cities.split(",")]
+    if args.run_once:
+        # Parse cities
+        cities = None
+        if args.cities:
+            cities = [c.strip() for c in args.cities.split(",")]
 
-    # Ensure data directory exists
-    os.makedirs("data", exist_ok=True)
+        # Ensure data directory exists
+        os.makedirs("data", exist_ok=True)
 
-    # Run trading cycle
-    signals = asyncio.run(run_once(cities=cities))
+        # Run trading cycle
+        signals = asyncio.run(run_once(cities=cities))
 
-    if args.show_signals and signals:
-        print("\n" + "=" * 60)
-        print("SIGNALS FOUND")
-        print("=" * 60)
-        for s in signals:
-            print(f"\n{s.city.upper()} - {s.target_date}")
-            print(f"  {s.bucket_question}")
-            print(f"  Model: {s.model_probability*100:.1f}% | Market: {s.market_price*100:.1f}%")
-            print(f"  Edge: {s.edge_pct:.1f}% | Position: ${s.position_size_usd:.2f}")
-            print(f"  EV: ${s.expected_value:.2f}")
+        if args.show_signals and signals:
+            print("\n" + "=" * 60)
+            print("SIGNALS FOUND")
+            print("=" * 60)
+            for s in signals:
+                city = s.metadata.get("city", "unknown").upper() if s.metadata else "UNKNOWN"
+                print(f"\n{city} - {s.target_date}")
+                print(f"  {s.description}")
+                print(f"  Model: {s.model_probability*100:.1f}% | Market: {s.market_price*100:.1f}%")
+                print(f"  Edge: {s.edge_pct:.1f}% | Position: ${s.position_size_usd:.2f}")
+                print(f"  EV: ${s.expected_value:.2f}")
+        return
+
+    logger.info("Starting websocket server", host=args.host, port=args.port)
+    uvicorn.run("signal_producer.ws_server:app", host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":
