@@ -86,6 +86,8 @@ def _get_polymarket_balance(
 
     Returns (balance, exchange_allowance, neg_risk_allowance).
     """
+    sig_type = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2"))
+
     temp_client = ClobClient(host, key=private_key, chain_id=chain_id)
     creds = temp_client.create_or_derive_api_creds()
 
@@ -94,12 +96,12 @@ def _get_polymarket_balance(
         key=private_key,
         chain_id=chain_id,
         creds=creds,
-        signature_type=0,
+        signature_type=sig_type,
         funder=wallet_address,
     )
 
     result = client.get_balance_allowance(
-        BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
     )
 
     balance = int(result.get("balance", "0")) / 10**USDC_E_DECIMALS
