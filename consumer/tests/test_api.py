@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import date
 
 import pytest
@@ -10,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from signal_schema import MarketType, Signal, SignalMetadata
 
+from signal_consumer import config as config_module
 from signal_consumer.api import create_app
 
 
@@ -29,6 +31,13 @@ def _build_signal(*, strategy: str = "weather", edge: float = 0.03) -> Signal:
         expected_value=0.20,
         metadata=SignalMetadata(city="nyc", bucket_low=40, bucket_high=41),
     )
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    config_module.get_settings.cache_clear()
+    yield
+    config_module.get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -122,4 +131,74 @@ async def test_webhook_accepts_and_dispatches_in_live_mode(monkeypatch):
         await asyncio.sleep(0.01)
 
     assert dispatched["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_healthz_returns_ok():
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/healthz")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_invalid_payload_missing_required_field():
+    app = create_app()
+    payload = _build_signal().model_dump(mode="json")
+    payload.pop("token_id")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/webhook/signal", json=payload)
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_invalid_payload_wrong_type():
+    app = create_app()
+    payload = _build_signal().model_dump(mode="json")
+    payload["edge"] = {"not": "a number"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/webhook/signal", json=payload)
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_webhook_returns_503_when_execution_queue_is_full(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "live")
+    monkeypatch.setenv("EXECUTION_WORKERS", "1")
+    monkeypatch.setenv("EXECUTION_QUEUE_MAXSIZE", "1")
+
+    release_worker = threading.Event()
+
+    def _slow_exec(*, settings, signal, request_id):
+        _ = settings, signal, request_id
+        release_worker.wait(timeout=2)
+        return {"ok": True}
+
+    monkeypatch.setattr("signal_consumer.api.execute_weather_signal_market_buy", _slow_exec)
+    app = create_app()
+
+    statuses: list[int] = []
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for _ in range(5):
+            resp = await client.post(
+                "/webhook/signal",
+                json=_build_signal(edge=0.02).model_dump(mode="json"),
+            )
+            statuses.append(resp.status_code)
+            if resp.status_code == 503:
+                assert resp.json()["detail"] == "execution queue is full"
+                break
+
+    release_worker.set()
+    await asyncio.sleep(0.05)
+
+    assert 200 in statuses
+    assert 503 in statuses
 

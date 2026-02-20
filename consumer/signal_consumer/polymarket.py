@@ -6,7 +6,7 @@ import threading
 import structlog
 
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, OrderType
+from py_clob_client.clob_types import ApiCreds, MarketOrderArgs, OrderType, PartialCreateOrderOptions
 from py_clob_client.constants import POLYGON
 from py_clob_client.order_builder.constants import BUY
 
@@ -18,7 +18,7 @@ logger = structlog.get_logger()
 _client_lock = threading.Lock()
 _market_options_lock = threading.Lock()
 _client_cache: dict[tuple, ClobClient] = {}
-_market_options_cache: dict[str, tuple[float, bool]] = {}
+_market_options_cache: dict[str, tuple[str, bool]] = {}
 
 
 def _require(value: str, name: str) -> str:
@@ -74,20 +74,21 @@ def get_cached_clob_client(settings: Settings) -> ClobClient:
     return client
 
 
-def get_market_options(client: ClobClient, token_id: str) -> tuple[float, bool]:
+def get_market_options(client: ClobClient, token_id: str) -> tuple[str, bool]:
     with _market_options_lock:
         cached = _market_options_cache.get(token_id)
         if cached is not None:
             return cached
-
-    tick_size = client.get_tick_size(token_id)
-    neg_risk = client.get_neg_risk(token_id)
-    options = (tick_size, neg_risk)
-
-    with _market_options_lock:
+        order_book = client.get_order_book(token_id)
+        tick_size = order_book.tick_size
+        neg_risk = order_book.neg_risk
+        if tick_size is None:
+            raise RuntimeError(f"Missing tick_size in order book for token_id={token_id}")
+        if neg_risk is None:
+            raise RuntimeError(f"Missing neg_risk in order book for token_id={token_id}")
+        options = (tick_size, neg_risk)
         _market_options_cache[token_id] = options
-
-    return options
+        return options
 
 
 def execute_weather_signal_market_buy(
@@ -130,14 +131,17 @@ def execute_weather_signal_market_buy(
         neg_risk=neg_risk,
     )
 
-    resp = client.create_and_post_market_order(
-        token_id=token_id,
-        side=BUY,
-        amount=amount_usd,
-        price=worst_price,
-        options={"tick_size": tick_size, "neg_risk": neg_risk},
-        order_type=OrderType.FOK,
+    signed_order = client.create_market_order(
+        MarketOrderArgs(
+            token_id=token_id,
+            amount=amount_usd,
+            side=BUY,
+            price=worst_price,
+            order_type=OrderType.FOK,
+        ),
+        options=PartialCreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk),
     )
+    resp = client.post_order(signed_order, orderType=OrderType.FOK)
 
     logger.info(
         "Order placed",
