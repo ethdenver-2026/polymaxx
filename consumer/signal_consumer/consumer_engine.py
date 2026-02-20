@@ -7,7 +7,8 @@ import structlog
 from .balances import get_balances
 from .config import Settings
 from .db import get_executed_notional_usd
-from .execute_order import ExecutionResult, execute_signal_data
+from .execute_order import ExecutionResult, execute_order
+from .polymarket import init_client, get_live_price as _get_live_price
 from .signal_pipeline import evaluate_strategy, parse_producer_signal_record
 
 logger = structlog.get_logger()
@@ -25,29 +26,23 @@ def get_available_balance_usdc(settings: Settings) -> float:
 
 def get_live_price(token_id: str, side: str = "buy") -> float:
     """Fetch live price from CLOB orderbook and fail loudly when missing."""
-    from .execute_order import _init_client  # noqa: PLC0415
-
-    client = _init_client()
-    book = client.get_order_book(token_id)
-    if side.lower() == "buy":
-        asks = book.asks if book.asks else []
-        if not asks:
-            raise RuntimeError(f"No asks available in orderbook for token_id={token_id}")
-        return float(asks[0].price)
-
-    bids = book.bids if book.bids else []
-    if not bids:
-        raise RuntimeError(f"No bids available in orderbook for token_id={token_id}")
-    return float(bids[0].price)
+    client = init_client()
+    price = _get_live_price(client, token_id, side)
+    if price is None:
+        raise RuntimeError(f"No {'asks' if side.lower() == 'buy' else 'bids'} available in orderbook for token_id={token_id}")
+    return price
 
 
 def execute_trade(payload: dict) -> ExecutionResult:
     """Execute strategy-approved signal via canonical execution path."""
-    return execute_signal_data(
-        payload,
-        prevalidated_live_price=payload["live_price"],
-        prevalidated_position_size_usd=payload["position_size_usd"],
-        enforce_edge_check=False,
+    live_price = payload["live_price"]
+    position_usd = payload["position_size_usd"]
+    size = position_usd / live_price if live_price > 0 else 0
+    return execute_order(
+        token_id=payload["token_id"],
+        side=payload.get("side", "buy"),
+        price=live_price,
+        size=size,
     )
 
 

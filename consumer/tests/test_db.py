@@ -5,16 +5,19 @@ import json
 from signal_consumer import db as db_module
 
 
-def test_log_signal_persists_extended_metadata(tmp_path, monkeypatch):
+def test_log_signal_persists_strategy_checks(tmp_path, monkeypatch):
     db_path = tmp_path / "consumer_signals.db"
     monkeypatch.setattr(db_module, "DB_PATH", db_path)
 
     signal_data = {
         "token_id": "tok-1",
-        "created_at": "2026-02-19T12:00:00+00:00",
-        "published_at": "2026-02-19T12:00:05+00:00",
-        "metadata_json": '{"forecast_horizon_hours":12}',
+        "model_probability": 0.6,
+        "market_price": 0.5,
     }
+    strategy_checks = [
+        {"name": "can_process", "passed": True, "detail": "Balance $14.20 sufficient", "data": {"balance": 14.2}},
+        {"name": "should_process", "passed": True, "detail": "Edge 10.0% >= 8.0%", "data": {"live_edge": 0.10}},
+    ]
     response = {
         "action": "executed",
         "status": "live",
@@ -24,24 +27,24 @@ def test_log_signal_persists_extended_metadata(tmp_path, monkeypatch):
         "live_edge": 0.08,
         "order_id": "ord-1",
         "errors": [],
-        "strategy_reasons": ["ok"],
-        "balance_available_usdc": 30.0,
-        "position_size_usd": 3.5,
-        "horizon_hours": 12.0,
+        "strategy_checks": strategy_checks,
     }
 
     db_module.log_signal(signal_data, response)
     rows = db_module.get_signals(limit=10)
     assert len(rows) == 1
     row = rows[0]
-    assert row["decision_status"] == "live"
-    assert row["strategy_reasons"] == ["ok"]
-    assert row["balance_available_usdc"] == 30.0
-    assert row["chosen_position_usd"] == 3.5
-    assert row["horizon_hours"] == 12.0
-    assert row["source_created_at"] == "2026-02-19T12:00:00+00:00"
-    assert row["source_published_at"] == "2026-02-19T12:00:05+00:00"
-    assert json.loads(row["metadata_json"])["forecast_horizon_hours"] == 12
+    assert row["action"] == "executed"
+    assert row["signal_price"] == 0.5
+    assert row["live_price"] == 0.52
+    assert row["signal_edge"] == 0.1
+    assert row["live_edge"] == 0.08
+    assert row["order_id"] == "ord-1"
+    assert row["strategy_checks"] is not None
+    assert len(row["strategy_checks"]) == 2
+    assert row["strategy_checks"][0]["name"] == "can_process"
+    assert row["strategy_checks"][0]["passed"] is True
+    assert row["strategy_checks"][1]["name"] == "should_process"
 
 
 def test_log_signal_notifies_sse_subscribers(tmp_path, monkeypatch):
