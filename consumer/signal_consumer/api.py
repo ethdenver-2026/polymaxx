@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from contextlib import suppress
 
 import structlog
 from fastapi import FastAPI, HTTPException
@@ -31,7 +34,62 @@ def create_app() -> FastAPI:
     )
     logger = structlog.get_logger()
 
-    app = FastAPI(title="signal-consumer", version="0.1.0")
+    execution_queue: asyncio.Queue[tuple[Signal, str]] = asyncio.Queue(
+        maxsize=settings.execution_queue_maxsize
+    )
+    workers: list[asyncio.Task] = []
+    workers_started = False
+    workers_lock = asyncio.Lock()
+
+    async def _worker() -> None:
+        while True:
+            signal, request_id = await execution_queue.get()
+            try:
+                await asyncio.to_thread(
+                    execute_weather_signal_market_buy,
+                    settings=settings,
+                    signal=signal,
+                    request_id=request_id,
+                )
+            except Exception as e:
+                # Fail loudly; do not swallow execution errors.
+                logger.error(
+                    "Signal execution failed",
+                    request_id=request_id,
+                    error=str(e),
+                    exc_info=True,
+                )
+            finally:
+                execution_queue.task_done()
+
+    async def _ensure_workers_started() -> None:
+        nonlocal workers_started
+        if workers_started:
+            return
+
+        async with workers_lock:
+            if workers_started:
+                return
+            for _ in range(settings.execution_workers):
+                workers.append(asyncio.create_task(_worker()))
+            workers_started = True
+
+    async def _shutdown_workers() -> None:
+        for task in workers:
+            task.cancel()
+        for task in workers:
+            with suppress(asyncio.CancelledError):
+                await task
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        await _ensure_workers_started()
+        try:
+            yield
+        finally:
+            await _shutdown_workers()
+
+    app = FastAPI(title="signal-consumer", version="0.1.0", lifespan=lifespan)
 
     @app.get("/healthz")
     async def healthz():
@@ -63,25 +121,27 @@ def create_app() -> FastAPI:
             position_size_usd=signal.position_size_usd,
         )
 
-        async def _execute():
-            try:
-                await asyncio.to_thread(
-                    execute_weather_signal_market_buy,
-                    settings=settings,
-                    signal=signal,
-                    request_id=request_id,
-                )
-            except Exception as e:
-                # Fail loudly; do not swallow execution errors.
-                logger.error(
-                    "Signal execution failed",
-                    request_id=request_id,
-                    error=str(e),
-                    exc_info=True,
-                )
+        if settings.trading_mode != "live":
+            logger.info(
+                "Signal simulated (paper mode)",
+                request_id=request_id,
+                trading_mode=settings.trading_mode,
+                token_id=signal.token_id,
+            )
+            return {"status": "simulated", "request_id": request_id}
 
-        # Don't block the webhook on trade execution.
-        asyncio.create_task(_execute())
+        try:
+            await _ensure_workers_started()
+            execution_queue.put_nowait((signal, request_id))
+        except asyncio.QueueFull as e:
+            logger.error(
+                "Execution queue full",
+                request_id=request_id,
+                queue_maxsize=settings.execution_queue_maxsize,
+                token_id=signal.token_id,
+                error=str(e),
+            )
+            raise HTTPException(status_code=503, detail="execution queue is full") from e
 
         return {"status": "accepted", "request_id": request_id}
 

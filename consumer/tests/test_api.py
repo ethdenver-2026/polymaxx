@@ -61,9 +61,7 @@ async def test_webhook_skips_weather_signal_below_threshold():
 
 
 @pytest.mark.asyncio
-async def test_webhook_accepts_weather_signal_at_threshold_and_dispatches(monkeypatch):
-    app = create_app()
-
+async def test_webhook_simulates_weather_signal_in_paper_mode(monkeypatch):
     dispatched = {"count": 0}
 
     def _fake_exec(*, settings, signal, request_id):
@@ -73,6 +71,39 @@ async def test_webhook_accepts_weather_signal_at_threshold_and_dispatches(monkey
         return {"ok": True}
 
     monkeypatch.setattr("signal_consumer.api.execute_weather_signal_market_buy", _fake_exec)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/webhook/signal",
+            json=_build_signal(edge=0.02).model_dump(mode="json"),
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "simulated"
+
+    # Dispatch is synchronous in paper mode.
+    assert dispatched["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_webhook_accepts_and_dispatches_in_live_mode(monkeypatch):
+    monkeypatch.setenv("TRADING_MODE", "live")
+    monkeypatch.setenv("EXECUTION_WORKERS", "1")
+    monkeypatch.setenv("EXECUTION_QUEUE_MAXSIZE", "10")
+
+    dispatched = {"count": 0}
+
+    def _fake_exec(*, settings, signal, request_id):
+        assert request_id
+        assert settings.trading_mode == "live"
+        assert signal.edge >= 0.02
+        dispatched["count"] += 1
+        return {"ok": True}
+
+    monkeypatch.setattr("signal_consumer.api.execute_weather_signal_market_buy", _fake_exec)
+    app = create_app()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(
@@ -84,7 +115,11 @@ async def test_webhook_accepts_weather_signal_at_threshold_and_dispatches(monkey
     body = resp.json()
     assert body["status"] == "accepted"
 
-    # Background task dispatch is async; give it a brief tick.
-    await asyncio.sleep(0.05)
+    # Poll briefly instead of fixed sleep to avoid flaky timing assumptions.
+    for _ in range(50):
+        if dispatched["count"] == 1:
+            break
+        await asyncio.sleep(0.01)
+
     assert dispatched["count"] == 1
 

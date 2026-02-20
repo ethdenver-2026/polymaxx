@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import structlog
 
 from py_clob_client.client import ClobClient
@@ -14,6 +15,10 @@ from signal_schema import Signal
 from .config import Settings
 
 logger = structlog.get_logger()
+_client_lock = threading.Lock()
+_market_options_lock = threading.Lock()
+_client_cache: dict[tuple, ClobClient] = {}
+_market_options_cache: dict[str, tuple[float, bool]] = {}
 
 
 def _require(value: str, name: str) -> str:
@@ -48,6 +53,43 @@ def build_clob_client(settings: Settings) -> ClobClient:
     )
 
 
+def _client_cache_key(settings: Settings) -> tuple:
+    return (
+        settings.clob_api_url,
+        settings.chain_id,
+        settings.polymarket_private_key,
+        settings.polymarket_api_key,
+        settings.polymarket_api_secret,
+        settings.polymarket_api_passphrase,
+    )
+
+
+def get_cached_clob_client(settings: Settings) -> ClobClient:
+    key = _client_cache_key(settings)
+    with _client_lock:
+        client = _client_cache.get(key)
+        if client is None:
+            client = build_clob_client(settings)
+            _client_cache[key] = client
+    return client
+
+
+def get_market_options(client: ClobClient, token_id: str) -> tuple[float, bool]:
+    with _market_options_lock:
+        cached = _market_options_cache.get(token_id)
+        if cached is not None:
+            return cached
+
+    tick_size = client.get_tick_size(token_id)
+    neg_risk = client.get_neg_risk(token_id)
+    options = (tick_size, neg_risk)
+
+    with _market_options_lock:
+        _market_options_cache[token_id] = options
+
+    return options
+
+
 def execute_weather_signal_market_buy(
     *,
     settings: Settings,
@@ -65,7 +107,7 @@ def execute_weather_signal_market_buy(
             f"TRADING_MODE={settings.trading_mode!r} - refusing to place real order"
         )
 
-    client = build_clob_client(settings)
+    client = get_cached_clob_client(settings)
 
     token_id = signal.token_id
     amount_usd = float(signal.position_size_usd)
@@ -76,8 +118,7 @@ def execute_weather_signal_market_buy(
     worst_price = min(signal.market_price + settings.max_slippage_abs, 0.99)
 
     # Market-specific options: discover tick size + neg risk flags.
-    tick_size = client.get_tick_size(token_id)
-    neg_risk = client.get_neg_risk(token_id)
+    tick_size, neg_risk = get_market_options(client, token_id)
 
     logger.info(
         "Placing Polymarket market BUY (FOK)",

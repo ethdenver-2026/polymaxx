@@ -51,7 +51,7 @@ class Signal(BaseModel):
     confidence: float = Field(ge=0, le=1, description="Model confidence score")
 
     # Sizing recommendation
-    position_size_usd: float = Field(ge=0, description="Recommended position in USD")
+    position_size_usd: float = Field(gt=0, description="Recommended position in USD")
     expected_value: float = Field(description="Expected profit in USD")
 
     # Metadata
