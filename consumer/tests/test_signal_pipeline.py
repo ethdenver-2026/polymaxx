@@ -35,7 +35,7 @@ def _legacy_payload() -> dict:
 def _settings(**overrides: object) -> Settings:
     base: dict[str, object] = {
         "trading_mode": "paper",
-        "weather_edge_threshold": 0.08,
+        "edge_threshold_pct": 8.0,
         "max_position_usd": 5.0,
         "bankroll_usdc": 50.0,
         "min_position_usd": 1.0,

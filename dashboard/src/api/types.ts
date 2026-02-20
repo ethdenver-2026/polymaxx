@@ -32,7 +32,7 @@ export interface ClosedPosition {
 
 export interface Activity {
   id: string;
-  timestamp: string;
+  timestamp: number | string;
   type: string; // "TRADE" | "REDEEM" | "DEPOSIT" | "WITHDRAWAL"
   title: string;
   outcome: string;
@@ -93,6 +93,5 @@ export interface ConsumerConfig {
   max_position_usd: number;
   kelly_fraction: number;
   edge_threshold_pct: number;
-  daily_loss_limit_pct: number;
   wallet_address: string;
 }
