@@ -1,0 +1,90 @@
+"""Tests for signal-consumer webhook behavior."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import date
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from signal_schema import MarketType, Signal, SignalMetadata
+
+from signal_consumer.api import create_app
+
+
+def _build_signal(*, strategy: str = "weather", edge: float = 0.03) -> Signal:
+    return Signal(
+        strategy=strategy,
+        market_type=MarketType.POLYMARKET,
+        market_id="market-123",
+        token_id="token-abc",
+        description="Weather bucket signal",
+        target_date=date.today(),
+        model_probability=0.55,
+        market_price=0.50,
+        edge=edge,
+        confidence=0.9,
+        position_size_usd=5.0,
+        expected_value=0.20,
+        metadata=SignalMetadata(city="nyc", bucket_low=40, bucket_high=41),
+    )
+
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_non_weather_strategy():
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/webhook/signal",
+            json=_build_signal(strategy="esports").model_dump(mode="json"),
+        )
+
+    assert resp.status_code == 400
+    assert "unsupported strategy" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_webhook_skips_weather_signal_below_threshold():
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/webhook/signal",
+            json=_build_signal(edge=0.019).model_dump(mode="json"),
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_webhook_accepts_weather_signal_at_threshold_and_dispatches(monkeypatch):
+    app = create_app()
+
+    dispatched = {"count": 0}
+
+    def _fake_exec(*, settings, signal, request_id):
+        assert request_id
+        assert signal.edge >= 0.02
+        dispatched["count"] += 1
+        return {"ok": True}
+
+    monkeypatch.setattr("signal_consumer.api.execute_weather_signal_market_buy", _fake_exec)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/webhook/signal",
+            json=_build_signal(edge=0.02).model_dump(mode="json"),
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "accepted"
+
+    # Background task dispatch is async; give it a brief tick.
+    await asyncio.sleep(0.05)
+    assert dispatched["count"] == 1
+
