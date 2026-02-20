@@ -678,10 +678,10 @@ def serve(
     port: int = typer.Option(8000, "--port", help="Bind port for websocket server"),
 ):
     """Run FastAPI websocket server for signals."""
-    import uvicorn
+    from .ws_server import run_signal_server
 
     typer.echo(f"Starting websocket server on {host}:{port}")
-    uvicorn.run("signal_producer.ws_server:app", host=host, port=port, log_level="info")
+    run_signal_server(host=host, port=port)
 
 
 def main():

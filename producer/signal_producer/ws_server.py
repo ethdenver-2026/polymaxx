@@ -21,7 +21,7 @@ async def health() -> dict[str, str]:
 async def run_cycle(cities: str | None = None) -> dict:
     try:
         city_list = [c.strip() for c in cities.split(",")] if cities else None
-        signals = await run_once(cities=city_list)
+        signals = await run_once(cities=city_list, broadcast_signals=True)
         return {"signals_found": len(signals)}
     except Exception as exc:
         logger.exception("run-once failed", error=str(exc), cities=cities)
@@ -39,3 +39,11 @@ async def signals_websocket(websocket: WebSocket) -> None:
     except Exception as exc:
         logger.exception("websocket connection error", error=str(exc))
         await broadcaster.disconnect(websocket)
+
+
+def run_signal_server(host: str = "0.0.0.0", port: int = 8000) -> None:
+    """Run the producer websocket FastAPI server."""
+    import uvicorn
+
+    logger.info("Starting websocket server", host=host, port=port)
+    uvicorn.run("signal_producer.ws_server:app", host=host, port=port, log_level="info")
