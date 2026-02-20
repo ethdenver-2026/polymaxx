@@ -2,12 +2,17 @@
 
 import argparse
 import asyncio
+import json
 import os
+from datetime import UTC, datetime
 
 import structlog
 
 from .config import get_settings, DEFAULT_CITIES
+from .models.models import SignalRecord, get_session
+from .publishing.websocket import broadcaster
 from .strategies.weather import WeatherStrategy
+from .strategies.base import Signal
 from .trading.executor import TradeExecutor
 
 
@@ -28,7 +33,39 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
-async def run_once(cities: list[str] | None = None) -> list:
+def _build_signal_record(signal: Signal) -> SignalRecord:
+    """Build a SignalRecord payload from a strategy Signal."""
+    metadata_json = json.dumps(signal.metadata) if signal.metadata else None
+    return SignalRecord(
+        strategy=signal.strategy,
+        market_id=signal.market_id,
+        token_id=signal.token_id,
+        model_probability=signal.model_probability,
+        market_price=signal.market_price,
+        edge=signal.edge,
+        confidence=signal.confidence,
+        decision="trade",
+        skip_reason=None,
+        trade_id=None,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        metadata_json=metadata_json,
+    )
+
+
+def _persist_signal_record_sync(executor: TradeExecutor, record: SignalRecord) -> None:
+    """Persist a signal record using the producer DB engine."""
+    session = get_session(executor.engine)
+    try:
+        session.add(record)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+async def run_once(cities: list[str] | None = None, broadcast_signals: bool = False) -> list:
     """Run a single trading cycle."""
     settings = get_settings()
     city_list = cities or DEFAULT_CITIES
@@ -59,6 +96,29 @@ async def run_once(cities: list[str] | None = None) -> list:
         for error in result.errors:
             logger.warning("Strategy error", error=error)
 
+    # Publish signals only when explicitly enabled (e.g., websocket server context).
+    for signal in result.signals:
+        signal_record = _build_signal_record(signal)
+        persist_task = asyncio.create_task(asyncio.to_thread(_persist_signal_record_sync, executor, signal_record))
+        publish_task: asyncio.Task[None] | None = None
+        if broadcast_signals:
+            publish_task = asyncio.create_task(broadcaster.broadcast_signal_record(signal_record))
+
+        # Prioritize websocket delivery completion first when enabled.
+        if publish_task is not None:
+            await publish_task
+
+        # DB write remains concurrent, but should not block signal delivery on failure.
+        try:
+            await persist_task
+        except Exception as exc:
+            logger.error(
+                "Failed to persist SignalRecord",
+                error=str(exc),
+                market_id=signal_record.market_id,
+                token_id=signal_record.token_id,
+            )
+
     # Execute trades
     trades_executed = 0
     for signal in result.signals:
@@ -76,7 +136,10 @@ async def run_once(cities: list[str] | None = None) -> list:
 
 
 def main():
-    """Main entry point with CLI argument parsing."""
+    """Main entry point with CLI argument parsing.
+
+    Default behavior runs a single trading cycle. Use --serve to run websocket server.
+    """
     parser = argparse.ArgumentParser(description="Polymarket Weather Prediction Bot")
 
     parser.add_argument(
@@ -89,8 +152,27 @@ def main():
         action="store_true",
         help="Show detailed signal information",
     )
+    parser.add_argument("--serve", action="store_true", help="Run websocket server instead of a single cycle")
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="Host to bind websocket server",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind websocket server",
+    )
 
     args = parser.parse_args()
+
+    if args.serve:
+        from .ws_server import run_signal_server
+
+        run_signal_server(host=args.host, port=args.port)
+        return
 
     # Parse cities
     cities = None
@@ -108,8 +190,9 @@ def main():
         print("SIGNALS FOUND")
         print("=" * 60)
         for s in signals:
-            print(f"\n{s.city.upper()} - {s.target_date}")
-            print(f"  {s.bucket_question}")
+            city = s.metadata.get("city", "unknown").upper() if s.metadata else "UNKNOWN"
+            print(f"\n{city} - {s.target_date}")
+            print(f"  {s.description}")
             print(f"  Model: {s.model_probability*100:.1f}% | Market: {s.market_price*100:.1f}%")
             print(f"  Edge: {s.edge_pct:.1f}% | Position: ${s.position_size_usd:.2f}")
             print(f"  EV: ${s.expected_value:.2f}")

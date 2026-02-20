@@ -77,7 +77,7 @@ def run(
 def resolve():
     """Check and resolve pending trades."""
     from .services.resolver import ResolutionService
-    from .data.models import init_db, get_session
+    from .models.models import init_db, get_session
 
     typer.echo("Checking for trades to resolve...")
 
@@ -115,7 +115,7 @@ def trades(
     ),
 ):
     """Show trade history."""
-    from .data.models import Trade, init_db, get_session
+    from .models.models import Trade, init_db, get_session
 
     engine = init_db()
     session = get_session(engine)
@@ -159,7 +159,7 @@ def trades(
 @app.command()
 def stats():
     """Show trading statistics."""
-    from .data.models import Trade, init_db, get_session
+    from .models.models import Trade, init_db, get_session
     from sqlalchemy import func
 
     engine = init_db()
@@ -440,7 +440,7 @@ def collect(
         collect --max-days 4       # Collect 1, 2, 3, and 4-day forecasts
         collect -c nyc,chicago -m 4  # Collect 1-4 day for specific cities
     """
-    from .data.collector import ForecastCollector
+    from .models.collector import ForecastCollector
 
     city_list = None
     if cities_opt:
@@ -482,7 +482,7 @@ def collect(
 @app.command()
 def list_forecasts():
     """List all stored ensemble forecasts."""
-    from .data.collector import ForecastCollector
+    from .models.collector import ForecastCollector
 
     collector = ForecastCollector()
     forecasts = collector.list_forecasts()
@@ -670,6 +670,18 @@ def outcomes(
                     typer.echo(f"{city.upper():>12}: Not yet resolved")
 
     asyncio.run(check_outcomes())
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind host for websocket server"),
+    port: int = typer.Option(8000, "--port", help="Bind port for websocket server"),
+):
+    """Run FastAPI websocket server for signals."""
+    from .ws_server import run_signal_server
+
+    typer.echo(f"Starting websocket server on {host}:{port}")
+    run_signal_server(host=host, port=port)
 
 
 def main():
