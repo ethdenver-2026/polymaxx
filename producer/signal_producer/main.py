@@ -7,7 +7,6 @@ import os
 from datetime import UTC, datetime
 
 import structlog
-import uvicorn
 
 from .config import get_settings, DEFAULT_CITIES
 from .models.models import SignalRecord, get_session
@@ -66,7 +65,7 @@ def _persist_signal_record_sync(executor: TradeExecutor, record: SignalRecord) -
         session.close()
 
 
-async def run_once(cities: list[str] | None = None) -> list:
+async def run_once(cities: list[str] | None = None, broadcast_signals: bool = False) -> list:
     """Run a single trading cycle."""
     settings = get_settings()
     city_list = cities or DEFAULT_CITIES
@@ -97,14 +96,17 @@ async def run_once(cities: list[str] | None = None) -> list:
         for error in result.errors:
             logger.warning("Strategy error", error=error)
 
-    # Publish signals in parallel with DB writes; websocket delivery is the priority.
+    # Publish signals only when explicitly enabled (e.g., websocket server context).
     for signal in result.signals:
         signal_record = _build_signal_record(signal)
-        publish_task = asyncio.create_task(broadcaster.broadcast_signal_record(signal_record))
         persist_task = asyncio.create_task(asyncio.to_thread(_persist_signal_record_sync, executor, signal_record))
+        publish_task: asyncio.Task[None] | None = None
+        if broadcast_signals:
+            publish_task = asyncio.create_task(broadcaster.broadcast_signal_record(signal_record))
 
-        # Prioritize websocket delivery completion first.
-        await publish_task
+        # Prioritize websocket delivery completion first when enabled.
+        if publish_task is not None:
+            await publish_task
 
         # DB write remains concurrent, but should not block signal delivery on failure.
         try:
@@ -136,7 +138,7 @@ async def run_once(cities: list[str] | None = None) -> list:
 def main():
     """Main entry point with CLI argument parsing.
 
-    Default behavior starts the websocket server. Use --run-once for a single cycle.
+    Default behavior runs a single trading cycle. Use --serve to run websocket server.
     """
     parser = argparse.ArgumentParser(description="Polymarket Weather Prediction Bot")
 
@@ -150,11 +152,7 @@ def main():
         action="store_true",
         help="Show detailed signal information",
     )
-    parser.add_argument(
-        "--run-once",
-        action="store_true",
-        help="Run one cycle and exit instead of starting websocket server",
-    )
+    parser.add_argument("--serve", action="store_true", help="Run websocket server instead of a single cycle")
     parser.add_argument(
         "--host",
         type=str,
@@ -170,33 +168,34 @@ def main():
 
     args = parser.parse_args()
 
-    if args.run_once:
-        # Parse cities
-        cities = None
-        if args.cities:
-            cities = [c.strip() for c in args.cities.split(",")]
+    if args.serve:
+        from .ws_server import run_signal_server
 
-        # Ensure data directory exists
-        os.makedirs("data", exist_ok=True)
-
-        # Run trading cycle
-        signals = asyncio.run(run_once(cities=cities))
-
-        if args.show_signals and signals:
-            print("\n" + "=" * 60)
-            print("SIGNALS FOUND")
-            print("=" * 60)
-            for s in signals:
-                city = s.metadata.get("city", "unknown").upper() if s.metadata else "UNKNOWN"
-                print(f"\n{city} - {s.target_date}")
-                print(f"  {s.description}")
-                print(f"  Model: {s.model_probability*100:.1f}% | Market: {s.market_price*100:.1f}%")
-                print(f"  Edge: {s.edge_pct:.1f}% | Position: ${s.position_size_usd:.2f}")
-                print(f"  EV: ${s.expected_value:.2f}")
+        run_signal_server(host=args.host, port=args.port)
         return
 
-    logger.info("Starting websocket server", host=args.host, port=args.port)
-    uvicorn.run("signal_producer.ws_server:app", host=args.host, port=args.port, log_level="info")
+    # Parse cities
+    cities = None
+    if args.cities:
+        cities = [c.strip() for c in args.cities.split(",")]
+
+    # Ensure data directory exists
+    os.makedirs("data", exist_ok=True)
+
+    # Run trading cycle
+    signals = asyncio.run(run_once(cities=cities))
+
+    if args.show_signals and signals:
+        print("\n" + "=" * 60)
+        print("SIGNALS FOUND")
+        print("=" * 60)
+        for s in signals:
+            city = s.metadata.get("city", "unknown").upper() if s.metadata else "UNKNOWN"
+            print(f"\n{city} - {s.target_date}")
+            print(f"  {s.description}")
+            print(f"  Model: {s.model_probability*100:.1f}% | Market: {s.market_price*100:.1f}%")
+            print(f"  Edge: {s.edge_pct:.1f}% | Position: ${s.position_size_usd:.2f}")
+            print(f"  EV: ${s.expected_value:.2f}")
 
 
 if __name__ == "__main__":
