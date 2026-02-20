@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     trading_mode: Literal["paper", "live"] = Field(default="paper")
     weather_edge_threshold: float = Field(default=0.02, ge=0.0, le=1.0)
     max_slippage_abs: float = Field(default=0.05, ge=0.0, le=1.0)
+    execution_workers: int = Field(default=16, ge=1)
+    execution_queue_maxsize: int = Field(default=1000, ge=1)
 
     # Polymarket / CLOB
     polymarket_private_key: str = Field(default="")
