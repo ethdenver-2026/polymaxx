@@ -52,7 +52,7 @@ def mock_open_meteo():
     client = AsyncMock()
 
     # Mock ensemble forecast - all members at 43°F (in the 42-44 range)
-    from signal_producer.strategies.weather.open_meteo import EnsembleForecast
+    from signal_producer.clients.open_meteo import EnsembleForecast
 
     forecast = MagicMock(spec=EnsembleForecast)
     forecast.city = "nyc"

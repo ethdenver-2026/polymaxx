@@ -2,21 +2,13 @@
 
 from pydantic_settings import BaseSettings
 from pydantic import Field
-from typing import Literal
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # Trading mode
-    trading_mode: Literal["paper", "live"] = Field(default="paper")
-
-    # Position sizing
-    bankroll_usdc: float = Field(default=50.0)
-    max_position_usd: float = Field(default=5.0)
-    kelly_fraction: float = Field(default=0.25)
+    # Signal generation
     edge_threshold_pct: float = Field(default=8.0)
-    daily_loss_limit_pct: float = Field(default=5.0)
 
     # API Keys
     venice_api_key: str = Field(default="")

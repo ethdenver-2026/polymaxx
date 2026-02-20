@@ -1,9 +1,15 @@
 """Weather market data structures and parsing."""
 
+from __future__ import annotations
+
 import json
 import re
 from dataclasses import dataclass
 from datetime import date
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .open_meteo import EnsembleForecast
 
 
 @dataclass
@@ -157,3 +163,16 @@ def parse_weather_event(data: dict, city: str, target_date: date) -> WeatherEven
         markets=weather_markets,
         closed=data.get("closed", False),
     )
+
+
+def calculate_market_probability(
+    ensemble: EnsembleForecast,
+    market: WeatherMarket,
+) -> float:
+    """
+    Calculate probability that the actual temperature falls in this market range.
+
+    Uses ensemble member counts: P = (members in range) / (total members)
+    """
+    count = sum(1 for temp in ensemble.member_highs if market.contains_temp(temp))
+    return count / len(ensemble.member_highs)

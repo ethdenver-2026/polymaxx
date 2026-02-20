@@ -29,48 +29,19 @@ app = typer.Typer(
 
 
 @app.command()
-def run(
-    cities: str = typer.Option(
-        None,
-        "--cities", "-c",
-        help="Comma-separated list of cities (e.g., nyc,chicago,miami)",
-    ),
-    all_cities: bool = typer.Option(
-        False,
-        "--all",
-        help="Run all configured cities",
-    ),
-    show_signals: bool = typer.Option(
-        False,
-        "--show-signals", "-s",
-        help="Show detailed signal information",
-    ),
-):
-    """Run a single trading cycle."""
-    from .main import run_once
+def run():
+    """Run a single trading cycle (DEPRECATED).
 
-    # Determine which cities to run
-    if all_cities:
-        city_list = list(CITIES.keys())
-    elif cities:
-        city_list = [c.strip() for c in cities.split(",")]
-    else:
-        city_list = DEFAULT_CITIES
-
-    typer.echo(f"Running trading cycle for: {', '.join(city_list)}")
-
-    signals = asyncio.run(run_once(cities=city_list))
-
-    if show_signals and signals:
-        typer.echo("\n" + "=" * 60)
-        typer.echo("SIGNALS FOUND")
-        typer.echo("=" * 60)
-        for s in signals:
-            typer.echo(f"\n{s.metadata.get('city', 'unknown').upper()} - {s.target_date}")
-            typer.echo(f"  {s.description}")
-            typer.echo(f"  Model: {s.model_probability*100:.1f}% | Market: {s.market_price*100:.1f}%")
-            typer.echo(f"  Edge: {s.edge_pct:.1f}% | Position: ${s.position_size_usd:.2f}")
-            typer.echo(f"  EV: ${s.expected_value:.2f}")
+    Use 'serve' command with --producer flag for continuous signal generation.
+    """
+    typer.echo("⚠️  The 'run' command is deprecated.")
+    typer.echo("")
+    typer.echo("Use --producer mode for continuous signal generation:")
+    typer.echo("  python -m signal_producer --producer")
+    typer.echo("")
+    typer.echo("Or use the 'serve' command for the websocket server:")
+    typer.echo("  polymarket-bot serve")
+    raise typer.Exit(1)
 
 
 @app.command()
@@ -125,7 +96,7 @@ def check(
     """Check a specific weather market."""
     from datetime import timedelta
     from .clients.gamma import GammaClient
-    from .strategies.weather.open_meteo import OpenMeteoClient
+    from .clients.open_meteo import OpenMeteoClient
 
     # Parse date
     if target_date:
@@ -185,94 +156,6 @@ def check(
             f"Model: {model_prob*100:>5.1f}% | "
             f"Edge: {edge*100:>+5.1f}% {edge_indicator}"
         )
-
-
-@app.command()
-def backtest(
-    start: str = typer.Option(
-        None,
-        "--start", "-s",
-        help="Start date (YYYY-MM-DD), defaults to 6 months ago",
-    ),
-    end: str = typer.Option(
-        None,
-        "--end", "-e",
-        help="End date (YYYY-MM-DD), defaults to yesterday",
-    ),
-    cities_opt: str = typer.Option(
-        None,
-        "--cities", "-c",
-        help="Comma-separated list of cities (defaults to all)",
-    ),
-    output: str = typer.Option(
-        None,
-        "--output", "-o",
-        help="Output CSV file path",
-    ),
-):
-    """Run historical backtest using GEFS forecasts."""
-    from datetime import timedelta
-    from .backtest import BacktestEngine
-
-    # Parse dates
-    if end:
-        end_date = date.fromisoformat(end)
-    else:
-        end_date = date.today() - timedelta(days=1)
-
-    if start:
-        start_date = date.fromisoformat(start)
-    else:
-        start_date = end_date - timedelta(days=180)
-
-    # Parse cities
-    city_list = None
-    if cities_opt:
-        city_list = [c.strip() for c in cities_opt.split(",")]
-
-    typer.echo(f"Running backtest: {start_date} to {end_date}")
-    if city_list:
-        typer.echo(f"Cities: {', '.join(city_list)}")
-    else:
-        typer.echo(f"Cities: all ({len(CITIES)})")
-
-    engine = BacktestEngine()
-    result = asyncio.run(engine.run(start_date, end_date, city_list))
-
-    # Print summary
-    typer.echo("\n" + "=" * 60)
-    typer.echo("BACKTEST RESULTS")
-    typer.echo("=" * 60)
-    typer.echo(result.summary())
-
-    if result.trades:
-        typer.echo("\n--- Sample Trades ---")
-        for trade in result.trades[:10]:
-            won_str = "WIN" if trade.won else "LOSS" if trade.won is not None else "PENDING"
-            pnl_str = f"${trade.pnl:.2f}" if trade.pnl is not None else "-"
-            typer.echo(
-                f"{trade.city:>8} {trade.target_date} | "
-                f"Edge: {trade.edge*100:>5.1f}% | "
-                f"Position: ${trade.position_usd:.2f} | "
-                f"{won_str:>7} {pnl_str:>8}"
-            )
-
-    # Output to CSV if requested
-    if output and result.trades:
-        import csv
-        with open(output, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "city", "target_date", "bucket", "forecast_temp", "actual_temp",
-                "model_prob", "market_price", "edge", "position_usd", "won", "pnl"
-            ])
-            for t in result.trades:
-                writer.writerow([
-                    t.city, t.target_date, t.bucket_question, t.forecast_temp,
-                    t.actual_temp, t.model_prob, t.market_price, t.edge,
-                    t.position_usd, t.won, t.pnl
-                ])
-        typer.echo(f"\nResults written to: {output}")
 
 
 @app.command()
@@ -366,112 +249,6 @@ def list_forecasts():
             typer.echo(f"{target_date}:")
             current_date = target_date
         typer.echo(f"  - {city}")
-
-
-@app.command()
-def signals(
-    cities_opt: str = typer.Option(
-        None,
-        "--cities", "-c",
-        help="Comma-separated list of cities (defaults to all)",
-    ),
-    verify: bool = typer.Option(
-        False,
-        "--verify", "-v",
-        help="Show detailed verification of each signal",
-    ),
-    min_edge: float = typer.Option(
-        8.0,
-        "--min-edge",
-        help="Minimum edge percentage to show",
-    ),
-    filter_mode: str = typer.Option(
-        "moderate",
-        "--filter",
-        help="Confidence filter: conservative, moderate, aggressive, disabled",
-    ),
-):
-    """Show current trading signals with optional verification.
-
-    Examples:
-        signals                    # All signals, moderate filter
-        signals --verify           # With detailed verification
-        signals -c miami,nyc       # Specific cities only
-        signals --filter disabled  # No probability filter
-    """
-    from .strategies.weather import WeatherStrategy, ConfidenceFilter
-
-    settings = get_settings()
-
-    # Parse cities
-    if cities_opt:
-        city_list = [c.strip() for c in cities_opt.split(",")]
-    else:
-        city_list = list(CITIES.keys())
-
-    # Get filter
-    filter_map = {
-        "conservative": ConfidenceFilter.conservative,
-        "moderate": ConfidenceFilter.moderate,
-        "aggressive": ConfidenceFilter.aggressive,
-        "disabled": ConfidenceFilter.disabled,
-    }
-    confidence_filter = filter_map.get(filter_mode, ConfidenceFilter.moderate)()
-
-    strategy = WeatherStrategy(
-        settings=settings,
-        cities=city_list,
-        confidence_filter=confidence_filter,
-    )
-
-    typer.echo("=" * 70)
-    typer.echo("CURRENT TRADING SIGNALS")
-    typer.echo("=" * 70)
-    typer.echo(f"Filter: {filter_mode} (min_bucket_prob >= {confidence_filter.min_bucket_probability:.0%})")
-    typer.echo(f"Edge threshold: {settings.edge_threshold_pct}%")
-    typer.echo(f"Cities: {len(city_list)}")
-    typer.echo("=" * 70)
-
-    result = asyncio.run(strategy.generate_signals())
-
-    if result.errors:
-        typer.echo(f"\nWarnings: {len(result.errors)} errors encountered")
-
-    if not result.signals:
-        typer.echo("\nNO SIGNALS - No trades meet criteria")
-        return
-
-    typer.echo(f"\n{len(result.signals)} SIGNALS FOUND:\n")
-
-    for s in result.signals:
-        city = s.metadata.get("city", "unknown").upper()
-        bucket_low = s.metadata.get("bucket_low")
-        bucket_high = s.metadata.get("bucket_high")
-
-        if bucket_low is None:
-            bucket_str = f"<={bucket_high}°F" if bucket_high else "?"
-        elif bucket_high is None:
-            bucket_str = f">={bucket_low}°F"
-        else:
-            bucket_str = f"{bucket_low}-{bucket_high}°F"
-
-        typer.echo(f"  {city} {s.target_date} | {bucket_str}")
-        typer.echo(f"    Model: {s.model_probability:.0%} | Market: {s.market_price:.1%} | Edge: {s.edge:.1%}")
-        typer.echo(f"    Position: ${s.position_size_usd:.2f} | EV: ${s.expected_value:.2f}")
-
-        if verify:
-            # Show ensemble stats
-            std = s.metadata.get("ensemble_std", 0)
-            typer.echo(f"    Ensemble std: {std:.1f}°F | Confidence: {s.confidence:.2f}")
-            typer.echo(f"    Token: {s.token_id[:30]}...")
-
-        typer.echo()
-
-    # Summary
-    total_position = sum(s.position_size_usd for s in result.signals)
-    total_ev = sum(s.expected_value for s in result.signals)
-    typer.echo("-" * 70)
-    typer.echo(f"TOTAL: ${total_position:.2f} position | ${total_ev:.2f} expected value")
 
 
 @app.command()

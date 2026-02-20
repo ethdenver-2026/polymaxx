@@ -4,7 +4,9 @@ Collects and stores Open-Meteo ensemble forecasts for backtesting.
 Run daily to build up historical ensemble data.
 """
 
+import asyncio
 import json
+import random
 from datetime import date, timedelta
 from pathlib import Path
 from dataclasses import dataclass, asdict
@@ -12,7 +14,7 @@ from dataclasses import dataclass, asdict
 import structlog
 
 from ..config import CITIES, CityConfig
-from ..strategies.weather.open_meteo import OpenMeteoClient, EnsembleForecast
+from ..clients.open_meteo import OpenMeteoClient, EnsembleForecast
 
 logger = structlog.get_logger()
 
@@ -195,7 +197,7 @@ class ForecastCollector:
         )
 
         results = {}
-        for city in city_slugs:
+        for i, city in enumerate(city_slugs):
             config = CITIES.get(city)
             if not config:
                 logger.warning("Unknown city", city=city)
@@ -204,6 +206,11 @@ class ForecastCollector:
             forecast = await self.collect_forecast(city, config, target_date, force)
             if forecast:
                 results[city] = forecast
+
+            # Add jitter between requests to avoid rate limiting (skip after last)
+            if i < len(city_slugs) - 1:
+                jitter = random.uniform(1.0, 2.0)
+                await asyncio.sleep(jitter)
 
         logger.info(
             "Collection complete",

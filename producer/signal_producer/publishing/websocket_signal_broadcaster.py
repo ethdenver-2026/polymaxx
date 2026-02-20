@@ -12,7 +12,6 @@ from fastapi import WebSocket
 
 from ..models.models import SignalRecord
 from ..signals.types import ProducerSignal
-from ..strategies.base import Signal
 
 logger = structlog.get_logger()
 
@@ -88,10 +87,6 @@ class SignalBroadcaster:
             market_id=market_id,
             token_id=token_id,
         )
-
-    async def broadcast_signal(self, signal: Signal) -> None:
-        payload = _json_safe(asdict(signal))
-        await self._broadcast_payload(payload, market_id=signal.market_id, token_id=signal.token_id)
 
     async def broadcast_signal_record(self, record: SignalRecord) -> None:
         payload = {

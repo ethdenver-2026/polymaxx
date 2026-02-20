@@ -2,18 +2,14 @@
 
 import argparse
 import asyncio
-import json
 import os
-from datetime import UTC, datetime
+import warnings
+from typing import Any
 
 import structlog
 
-from .config import get_settings, DEFAULT_CITIES
-from .models.models import SignalRecord, get_session, init_db
-from .publishing.websocket import broadcaster
-from .signals.types import ProducerSignal, WeatherMetadata, PolymarketInfo
-from .strategies.weather import WeatherStrategy
-from .strategies.base import Signal
+from .config import DEFAULT_CITIES
+from .signals.types import ProducerSignal
 
 
 # Configure structured logging
@@ -33,130 +29,25 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
-def _build_signal_record(signal: Signal) -> SignalRecord:
-    """Build a SignalRecord payload from a strategy Signal."""
-    metadata_json = json.dumps(signal.metadata) if signal.metadata else None
-    return SignalRecord(
-        strategy=signal.strategy,
-        market_id=signal.market_id,
-        token_id=signal.token_id,
-        model_probability=signal.model_probability,
-        market_price=signal.market_price,
-        edge=signal.edge,
-        confidence=signal.confidence,
-        decision="trade",
-        skip_reason=None,
-        created_at=datetime.now(UTC).replace(tzinfo=None),
-        metadata_json=metadata_json,
+async def run_once(cities: list[str] | None = None, broadcast_signals: bool = False) -> list[Any]:
+    """Run a single signal generation cycle.
+
+    DEPRECATED: Use `--producer` mode for continuous signal generation.
+    This function now returns an empty list. Use the producer orchestrator
+    for the full signal generation pipeline.
+    """
+    warnings.warn(
+        "run_once() is deprecated. Use --producer mode for signal generation.",
+        DeprecationWarning,
+        stacklevel=2,
     )
-
-
-def _persist_signal_record_sync(engine, record: SignalRecord) -> None:
-    """Persist a signal record using the producer DB engine."""
-    session = get_session(engine)
-    try:
-        session.add(record)
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
-def _build_producer_signal(signal: Signal) -> ProducerSignal:
-    """Build canonical ProducerSignal payload from strategy Signal."""
-    metadata = signal.metadata or {}
-    weather_metadata: WeatherMetadata = {
-        "city": str(metadata.get("city", "")),
-        "target_date": signal.target_date.isoformat(),
-        "ensemble_mean": float(metadata.get("ensemble_mean", 0.0)),
-        "ensemble_std": float(metadata.get("ensemble_std", metadata.get("ensemble_std_dev", 0.0))),
-        "members_in_range": int(metadata.get("members_in_range", round(signal.model_probability * 31))),
-    }
-
-    exchange: PolymarketInfo = {
-        "exchange": "polymarket",
-        "event_id": signal.market_id,
-        "token_id": signal.token_id,
-        "side": "yes",
-        "market_description": signal.description,
-        "resolution_source": str(metadata.get("resolution_source", "")),
-        "market_price": signal.market_price,
-        "edge": signal.edge,
-        "price_timestamp": datetime.now(UTC).isoformat(),
-    }
-
-    return ProducerSignal(
-        signal_type="weather",
-        model_probability=signal.model_probability,
-        confidence=signal.confidence,
-        forecast_source="open_meteo",
-        forecast_time=datetime.now(UTC).isoformat(),
-        metadata=weather_metadata,
-        exchanges=[exchange],
-    )
-
-
-async def run_once(cities: list[str] | None = None, broadcast_signals: bool = False) -> list:
-    """Run a single signal generation cycle."""
-    settings = get_settings()
     city_list = cities or DEFAULT_CITIES
-
-    logger.info(
-        "Starting signal generation",
+    logger.warning(
+        "run_once is deprecated - use --producer mode",
         cities=city_list,
-        edge_threshold=f"{settings.edge_threshold_pct:.1f}%",
+        broadcast_signals=broadcast_signals,
     )
-
-    # Initialize components
-    strategy = WeatherStrategy(settings, cities=city_list)
-    engine = init_db()
-
-    # Generate signals (async)
-    result = await strategy.generate_signals()
-
-    logger.info(
-        "Strategy complete",
-        events_checked=result.events_checked,
-        signals_found=len(result.signals),
-        errors=len(result.errors),
-    )
-
-    if result.errors:
-        for error in result.errors:
-            logger.warning("Strategy error", error=error)
-
-    # Persist and optionally broadcast signals
-    for signal in result.signals:
-        producer_signal = _build_producer_signal(signal)
-        signal_record = _build_signal_record(signal)
-        persist_task = asyncio.create_task(asyncio.to_thread(_persist_signal_record_sync, engine, signal_record))
-        publish_task: asyncio.Task[None] | None = None
-        if broadcast_signals:
-            publish_task = asyncio.create_task(broadcaster.broadcast_producer_signal(producer_signal))
-
-        # Prioritize websocket delivery completion first when enabled.
-        if publish_task is not None:
-            await publish_task
-
-        # DB write remains concurrent, but should not block signal delivery on failure.
-        try:
-            await persist_task
-        except Exception as exc:
-            logger.error(
-                "Failed to persist SignalRecord",
-                error=str(exc),
-                market_id=signal_record.market_id,
-                token_id=signal_record.token_id,
-            )
-
-    logger.info(
-        "Cycle complete",
-        signals=len(result.signals),
-    )
-
-    return result.signals
+    return []
 
 
 def main():
@@ -223,25 +114,11 @@ def main():
         run_signal_server(host=args.host, port=args.port)
         return
 
-    # Parse cities
-    cities = None
-    if args.cities:
-        cities = [c.strip() for c in args.cities.split(",")]
-
-    # Run trading cycle
-    signals = asyncio.run(run_once(cities=cities))
-
-    if args.show_signals and signals:
-        print("\n" + "=" * 60)
-        print("SIGNALS FOUND")
-        print("=" * 60)
-        for s in signals:
-            city = s.metadata.get("city", "unknown").upper() if s.metadata else "UNKNOWN"
-            print(f"\n{city} - {s.target_date}")
-            print(f"  {s.description}")
-            print(f"  Model: {s.model_probability*100:.1f}% | Market: {s.market_price*100:.1f}%")
-            print(f"  Edge: {s.edge_pct:.1f}% | Position: ${s.position_size_usd:.2f}")
-            print(f"  EV: ${s.expected_value:.2f}")
+    # Default: show deprecation message and recommend --producer mode
+    print("No mode specified. Available modes:")
+    print("  --producer  Run continuous signal generation (recommended)")
+    print("  --serve     Run websocket server")
+    print("\nExample: python -m signal_producer --producer")
 
 
 if __name__ == "__main__":

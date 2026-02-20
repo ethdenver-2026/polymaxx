@@ -287,21 +287,21 @@ class TestParseTempRange:
     """Test the parse_temp_range function."""
 
     def test_parse_temp_range_between(self):
-        from signal_producer.strategies.weather.markets import parse_temp_range
+        from signal_producer.clients.markets import parse_temp_range
 
         low, high = parse_temp_range("between 34-35°F")
         assert low == 34
         assert high == 36  # Exclusive upper bound
 
     def test_parse_temp_range_or_below(self):
-        from signal_producer.strategies.weather.markets import parse_temp_range
+        from signal_producer.clients.markets import parse_temp_range
 
         low, high = parse_temp_range("31°F or below")
         assert low is None
         assert high == 32
 
     def test_parse_temp_range_or_higher(self):
-        from signal_producer.strategies.weather.markets import parse_temp_range
+        from signal_producer.clients.markets import parse_temp_range
 
         low, high = parse_temp_range("46°F or higher")
         assert low == 46

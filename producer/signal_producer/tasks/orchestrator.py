@@ -18,7 +18,7 @@ from ..models.models import Base
 from ..config import get_settings, CITIES
 from ..publishing.websocket import SignalBroadcaster
 from ..registry.market_registry import MarketRegistry
-from ..strategies.weather.open_meteo import OpenMeteoClient
+from ..clients.open_meteo import OpenMeteoClient
 from ..tracker.price_tracker import PriceTracker
 
 from .event_discovery import EventDiscoveryTask

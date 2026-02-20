@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 if TYPE_CHECKING:
-    from ..strategies.weather.markets import WeatherEvent
+    from .markets import WeatherEvent
 
 
 GAMMA_API_URL = "https://gamma-api.polymarket.com"
@@ -80,7 +80,7 @@ class GammaClient:
             WeatherEvent or None if not found
         """
         # Lazy import to avoid circular dependency
-        from ..strategies.weather.markets import parse_weather_event
+        from .markets import parse_weather_event
 
         slug = self._build_weather_slug(city, target_date)
         data = await self.fetch_event_by_slug(slug)

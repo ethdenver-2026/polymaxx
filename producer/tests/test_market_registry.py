@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from signal_producer.models.models import Base
 from signal_producer.registry.market_registry import MarketRegistry
-from signal_producer.strategies.weather.markets import WeatherEvent, WeatherMarket
+from signal_producer.clients.markets import WeatherEvent, WeatherMarket
 
 
 @pytest.fixture

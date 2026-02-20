@@ -338,6 +338,7 @@ fee = C × feeRate × (p × (1 - p))^exponent
 ```
 
 Where:
+
 - **C** = number of shares traded
 - **p** = share price
 - **feeRate** and **exponent** vary by market type
@@ -351,6 +352,7 @@ Where:
 | Sports (NCAAB, Serie A) | 0.0175 | 1 | 0.44% | 25% |
 
 **Notes:**
+
 - Fees decrease symmetrically toward price extremes (0 or 1)
 - Minimum fee charged: **0.0001 USDC** (smaller amounts round to zero)
 - No separate maker fees—only taker fees with daily rebate distributions

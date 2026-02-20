@@ -6,7 +6,7 @@ from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from signal_producer.tasks.event_discovery import EventDiscoveryTask
-from signal_producer.strategies.weather.markets import WeatherEvent, WeatherMarket
+from signal_producer.clients.markets import WeatherEvent, WeatherMarket
 
 
 @pytest.fixture

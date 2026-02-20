@@ -18,7 +18,7 @@ from ..config import CITIES
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from ..registry.market_registry import MarketRegistry, CachedEvent, CachedMarket
-    from ..strategies.weather.open_meteo import OpenMeteoClient
+    from ..clients.open_meteo import OpenMeteoClient
     from ..publishing.websocket import SignalBroadcaster
 
 logger = structlog.get_logger()

@@ -17,8 +17,8 @@ from signal_producer.clients.gamma import GammaClient
 from signal_producer.models.models import Base
 from signal_producer.publishing.websocket import SignalBroadcaster
 from signal_producer.registry.market_registry import MarketRegistry
-from signal_producer.strategies.weather.markets import WeatherEvent, WeatherMarket
-from signal_producer.strategies.weather.open_meteo import EnsembleForecast, OpenMeteoClient
+from signal_producer.clients.markets import WeatherEvent, WeatherMarket
+from signal_producer.clients.open_meteo import EnsembleForecast, OpenMeteoClient
 from signal_producer.tasks.event_discovery import EventDiscoveryTask
 from signal_producer.tasks.signal_generator import SignalGeneratorTask
 from signal_producer.tracker.price_tracker import PriceTracker
