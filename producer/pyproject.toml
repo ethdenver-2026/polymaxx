@@ -9,6 +9,8 @@ dependencies = [
 
     # HTTP client
     "httpx[http2]>=0.28.0",
+    "fastapi==0.129.0",
+    "uvicorn==0.41.0",
 
     # Validation
     "pydantic>=2.10.0",
@@ -55,6 +57,9 @@ signal-producer = "signal_producer.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+signal-schema = { path = "../shared", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
