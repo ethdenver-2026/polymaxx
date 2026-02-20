@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import threading
-import structlog
 
+import structlog
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, MarketOrderArgs, OrderType, PartialCreateOrderOptions
+from py_clob_client.clob_types import (
+    ApiCreds,
+    AssetType,
+    BalanceAllowanceParams,
+    MarketOrderArgs,
+    OrderType,
+    PartialCreateOrderOptions,
+)
 from py_clob_client.constants import POLYGON
 from py_clob_client.order_builder.constants import BUY
 
@@ -150,4 +158,66 @@ def execute_weather_signal_market_buy(
         response=resp,
     )
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Shared utility functions
+# ---------------------------------------------------------------------------
+
+# USDC.e decimals on Polygon
+USDC_E_DECIMALS = 6
+
+
+def init_client() -> ClobClient:
+    """Initialize a ClobClient from environment variables.
+
+    Consolidates the duplicated _init_client() from execute_order.py,
+    simulate_order.py, and strategy.py.
+    """
+    private_key = os.environ.get("POLYMARKET_PRIVATE_KEY")
+    if not private_key:
+        raise RuntimeError("POLYMARKET_PRIVATE_KEY not set")
+
+    wallet_address = os.environ.get("POLYMARKET_WALLET_ADDRESS", "")
+    host = os.environ.get("CLOB_API_URL", "https://clob.polymarket.com")
+    chain_id = int(os.environ.get("CHAIN_ID", "137"))
+    sig_type = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2"))
+
+    temp_client = ClobClient(host, key=private_key, chain_id=chain_id)
+    creds = temp_client.create_or_derive_api_creds()
+
+    return ClobClient(
+        host,
+        key=private_key,
+        chain_id=chain_id,
+        creds=creds,
+        signature_type=sig_type,
+        funder=wallet_address or None,
+    )
+
+
+def get_live_price(client: ClobClient, token_id: str, side: str) -> float | None:
+    """Fetch the current best price from the orderbook.
+
+    Returns the best ask for buys, best bid for sells.
+    """
+    try:
+        book = client.get_order_book(token_id)
+        if side.lower() == "buy":
+            asks = book.asks if book.asks else []
+            return float(asks[0].price) if asks else None
+        else:
+            bids = book.bids if book.bids else []
+            return float(bids[0].price) if bids else None
+    except Exception:
+        return None
+
+
+def get_clob_balance(client: ClobClient) -> float:
+    """Fetch USDC.e balance from the Polymarket CLOB."""
+    sig_type = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2"))
+    result = client.get_balance_allowance(
+        BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
+    )
+    return int(result.get("balance", "0")) / 10**USDC_E_DECIMALS
 
