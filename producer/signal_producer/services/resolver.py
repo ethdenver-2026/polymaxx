@@ -8,7 +8,7 @@ import structlog
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
-    from ..data.models import Trade
+    from ..models.models import Trade
 
 
 logger = structlog.get_logger()
@@ -139,7 +139,7 @@ class ResolutionService:
         Returns:
             Tuple of (resolved_count, pending_count)
         """
-        from ..data.models import Trade
+        from ..models.models import Trade
 
         # Get trades that need resolution
         pending_trades = session.query(Trade).filter(
