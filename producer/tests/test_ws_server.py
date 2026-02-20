@@ -11,7 +11,7 @@ from signal_producer.models.models import SignalRecord
 def test_consumer_receives_full_signal_record_payload(monkeypatch):
     """Consumer websocket receives the full SignalRecord payload."""
 
-    async def fake_run_once(cities=None):
+    async def fake_run_once(cities=None, broadcast_signals=False):
         record = SignalRecord(
             id=42,
             strategy="weather",

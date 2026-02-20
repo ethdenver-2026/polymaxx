@@ -59,10 +59,10 @@ class SignalBroadcaster:
             )
             return
 
-        failed: list[WebSocket] = []
-        for websocket in connections:
+        async def _send(websocket: WebSocket) -> Exception | None:
             try:
                 await websocket.send_json(payload)
+                return None
             except Exception as exc:
                 logger.error(
                     "WebSocket send failed",
@@ -70,7 +70,10 @@ class SignalBroadcaster:
                     market_id=market_id,
                     token_id=token_id,
                 )
-                failed.append(websocket)
+                return exc
+
+        send_results = await asyncio.gather(*[_send(websocket) for websocket in connections], return_exceptions=False)
+        failed = [websocket for websocket, result in zip(connections, send_results, strict=False) if result is not None]
 
         if failed:
             async with self._lock:
