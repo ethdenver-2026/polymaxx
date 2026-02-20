@@ -4,9 +4,6 @@ version = "0.1.0"
 description = "Signal consumer for prediction market trading"
 requires-python = ">=3.12"
 dependencies = [
-    # Shared schema
-    "signal-schema",
-
     # HTTP client
     "httpx[http2]>=0.28.0",
 
@@ -14,7 +11,7 @@ dependencies = [
     "pydantic==2.12.5",
     "pydantic-settings==2.13.1",
 
-    # Webhook server
+    # Dashboard API
     "fastapi>=0.129.0",
     "uvicorn[standard]>=0.41.0",
 
@@ -39,7 +36,7 @@ dev = [
 ]
 
 [project.scripts]
-signal-consumer = "signal_consumer.api:main"
+signal-consumer = "signal_consumer.run:main"
 
 [build-system]
 requires = ["hatchling"]

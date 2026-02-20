@@ -11,6 +11,7 @@ import structlog
 from .config import get_settings, DEFAULT_CITIES
 from .models.models import SignalRecord, get_session
 from .publishing.websocket import broadcaster
+from .signals.types import ProducerSignal, WeatherMetadata, PolymarketInfo
 from .strategies.weather import WeatherStrategy
 from .strategies.base import Signal
 from .trading.executor import TradeExecutor
@@ -65,6 +66,40 @@ def _persist_signal_record_sync(executor: TradeExecutor, record: SignalRecord) -
         session.close()
 
 
+def _build_producer_signal(signal: Signal) -> ProducerSignal:
+    """Build canonical ProducerSignal payload from strategy Signal."""
+    metadata = signal.metadata or {}
+    weather_metadata: WeatherMetadata = {
+        "city": str(metadata.get("city", "")),
+        "target_date": signal.target_date.isoformat(),
+        "ensemble_mean": float(metadata.get("ensemble_mean", 0.0)),
+        "ensemble_std": float(metadata.get("ensemble_std", metadata.get("ensemble_std_dev", 0.0))),
+        "members_in_range": int(metadata.get("members_in_range", round(signal.model_probability * 31))),
+    }
+
+    exchange: PolymarketInfo = {
+        "exchange": "polymarket",
+        "event_id": signal.market_id,
+        "token_id": signal.token_id,
+        "side": "yes",
+        "market_description": signal.description,
+        "resolution_source": str(metadata.get("resolution_source", "")),
+        "market_price": signal.market_price,
+        "edge": signal.edge,
+        "price_timestamp": datetime.now(UTC).isoformat(),
+    }
+
+    return ProducerSignal(
+        signal_type="weather",
+        model_probability=signal.model_probability,
+        confidence=signal.confidence,
+        forecast_source="open_meteo",
+        forecast_time=datetime.now(UTC).isoformat(),
+        metadata=weather_metadata,
+        exchanges=[exchange],
+    )
+
+
 async def run_once(cities: list[str] | None = None, broadcast_signals: bool = False) -> list:
     """Run a single trading cycle."""
     settings = get_settings()
@@ -98,11 +133,12 @@ async def run_once(cities: list[str] | None = None, broadcast_signals: bool = Fa
 
     # Publish signals only when explicitly enabled (e.g., websocket server context).
     for signal in result.signals:
+        producer_signal = _build_producer_signal(signal)
         signal_record = _build_signal_record(signal)
         persist_task = asyncio.create_task(asyncio.to_thread(_persist_signal_record_sync, executor, signal_record))
         publish_task: asyncio.Task[None] | None = None
         if broadcast_signals:
-            publish_task = asyncio.create_task(broadcaster.broadcast_signal_record(signal_record))
+            publish_task = asyncio.create_task(broadcaster.broadcast_producer_signal(producer_signal))
 
         # Prioritize websocket delivery completion first when enabled.
         if publish_task is not None:
