@@ -2,14 +2,18 @@
 
 import argparse
 import asyncio
+import json
 import os
+from datetime import UTC, datetime
 
 import structlog
 import uvicorn
 
 from .config import get_settings, DEFAULT_CITIES
+from .models.models import SignalRecord, get_session
 from .publishing.websocket import broadcaster
 from .strategies.weather import WeatherStrategy
+from .strategies.base import Signal
 from .trading.executor import TradeExecutor
 
 
@@ -28,6 +32,38 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
+
+
+def _build_signal_record(signal: Signal) -> SignalRecord:
+    """Build a SignalRecord payload from a strategy Signal."""
+    metadata_json = json.dumps(signal.metadata) if signal.metadata else None
+    return SignalRecord(
+        strategy=signal.strategy,
+        market_id=signal.market_id,
+        token_id=signal.token_id,
+        model_probability=signal.model_probability,
+        market_price=signal.market_price,
+        edge=signal.edge,
+        confidence=signal.confidence,
+        decision="trade",
+        skip_reason=None,
+        trade_id=None,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        metadata_json=metadata_json,
+    )
+
+
+def _persist_signal_record_sync(executor: TradeExecutor, record: SignalRecord) -> None:
+    """Persist a signal record using the producer DB engine."""
+    session = get_session(executor.engine)
+    try:
+        session.add(record)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 async def run_once(cities: list[str] | None = None) -> list:
@@ -61,9 +97,25 @@ async def run_once(cities: list[str] | None = None) -> list:
         for error in result.errors:
             logger.warning("Strategy error", error=error)
 
-    # Publish signals to websocket subscribers before execution.
+    # Publish signals in parallel with DB writes; websocket delivery is the priority.
     for signal in result.signals:
-        await broadcaster.broadcast_signal(signal)
+        signal_record = _build_signal_record(signal)
+        publish_task = asyncio.create_task(broadcaster.broadcast_signal_record(signal_record))
+        persist_task = asyncio.create_task(asyncio.to_thread(_persist_signal_record_sync, executor, signal_record))
+
+        # Prioritize websocket delivery completion first.
+        await publish_task
+
+        # DB write remains concurrent, but should not block signal delivery on failure.
+        try:
+            await persist_task
+        except Exception as exc:
+            logger.error(
+                "Failed to persist SignalRecord",
+                error=str(exc),
+                market_id=signal_record.market_id,
+                token_id=signal_record.token_id,
+            )
 
     # Execute trades
     trades_executed = 0
