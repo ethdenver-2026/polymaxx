@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     create_engine,
+    Boolean,
     Column,
     Integer,
     String,
@@ -33,6 +34,50 @@ class Observation(Base):
 
     __table_args__ = (
         UniqueConstraint('city', 'date', name='uq_city_date'),
+    )
+
+
+class PredictionRecord(Base):
+    """Track every bucket probability prediction and its outcome.
+
+    Used for calibration analysis: comparing model probabilities against
+    actual outcomes to assess and improve forecast accuracy.
+
+    Records ALL buckets for an event, not just traded ones.
+    """
+
+    __tablename__ = "predictions"
+
+    id = Column(Integer, primary_key=True)
+    forecast_date = Column(Date, nullable=False)  # When forecast was made
+    target_date = Column(Date, nullable=False, index=True)
+    city = Column(String(50), nullable=False, index=True)
+
+    # Bucket info
+    bucket_question = Column(Text, nullable=False)
+    bucket_low = Column(Float)  # None for "X or below"
+    bucket_high = Column(Float)  # None for "X or above"
+
+    # Prediction
+    raw_ensemble_prob = Column(Float, nullable=False)  # Model probability
+    ensemble_mean = Column(Float)  # Ensemble mean temp
+    ensemble_spread = Column(Float)  # max - min spread
+
+    # Market state at prediction time
+    market_price = Column(Float)  # Price at time of prediction
+
+    # Outcome (filled after resolution)
+    actual_temp = Column(Float)  # Observed high temperature
+    outcome = Column(Boolean)  # Did temp fall in this bucket?
+    resolved_at = Column(DateTime)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            'city', 'target_date', 'bucket_question', 'forecast_date',
+            name='uq_prediction',
+        ),
     )
 
 
