@@ -43,8 +43,8 @@ from py_clob_client.order_builder.constants import BUY, SELL
 from .polymarket import init_client, get_live_price
 from .simulate_order import SimulationResult, simulate_order
 
-# Polymarket minimum order size
-MIN_ORDER_SIZE = 5
+# Polymarket minimum order value in USD
+MIN_ORDER_USD = 1.0
 
 
 @dataclass
@@ -125,8 +125,9 @@ def execute_order(
     """
     errors: list[str] = []
 
-    if size < MIN_ORDER_SIZE:
-        size = float(MIN_ORDER_SIZE)
+    min_size = MIN_ORDER_USD / price if price > 0 else 0
+    if size < min_size:
+        size = min_size
 
     # --- Step 1: Simulate ---
     if skip_simulation:
@@ -279,8 +280,9 @@ def execute_signal(
         )
 
     size = position_size_usd / live_price
-    if size < MIN_ORDER_SIZE:
-        size = float(MIN_ORDER_SIZE)
+    min_size = MIN_ORDER_USD / live_price
+    if size < min_size:
+        size = min_size
 
     result = execute_order(
         token_id=token_id,

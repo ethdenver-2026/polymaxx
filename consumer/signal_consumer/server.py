@@ -49,6 +49,9 @@ logger = logging.getLogger("signal_consumer.server")
 # Required fields in a signal payload
 REQUIRED_FIELDS = {"token_id", "model_probability", "market_price", "position_size_usd"}
 
+# Single strategy instance — caches CLOB client across signals
+_strategy = WeatherStrategy()
+
 
 def _validate_signal(data: dict) -> list[str]:
     """Validate that a signal payload has all required fields."""
@@ -94,10 +97,9 @@ async def _handle_signal(websocket):
                 continue
 
             # Run strategy pipeline in a thread (py-clob-client is synchronous)
-            strategy = WeatherStrategy()
             loop = asyncio.get_event_loop()
             strategy_result = await loop.run_in_executor(
-                None, lambda: strategy.process(data)
+                None, lambda: _strategy.process(data)
             )
 
             # Build response from result (DB logging happens inside process())

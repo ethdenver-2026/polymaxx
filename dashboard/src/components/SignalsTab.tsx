@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useSignals } from "@/hooks/queries";
 import type { StrategyCheckData } from "@/api/types";
 
@@ -145,9 +145,8 @@ export function SignalsTab() {
               const hasChecks = s.strategy_checks && s.strategy_checks.length > 0;
 
               return (
-                <>
+                <Fragment key={s.id}>
                   <tr
-                    key={s.id}
                     className={`signal-row border-b border-[#1e2235]/50 hover:bg-[#4ade8008] transition-colors ${hasChecks ? "cursor-pointer" : ""}`}
                     style={{ animationDelay: `${i * 30}ms` }}
                     onClick={() => hasChecks && setExpandedId(isExpanded ? null : s.id)}
@@ -185,7 +184,7 @@ export function SignalsTab() {
                     </td>
                   </tr>
                   {isExpanded && hasChecks && (
-                    <tr key={`${s.id}-checks`} className="border-b border-[#1e2235]/50">
+                    <tr className="border-b border-[#1e2235]/50">
                       <td></td>
                       <td colSpan={8} className="px-4 pb-3 bg-[#0d0f1a]">
                         <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 pt-2 pb-1">
@@ -195,7 +194,7 @@ export function SignalsTab() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
           </tbody>
