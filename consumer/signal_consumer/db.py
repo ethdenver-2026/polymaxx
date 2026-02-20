@@ -64,9 +64,15 @@ def init_db() -> None:
             signal_edge  REAL,
             live_edge    REAL,
             order_id    TEXT,
-            errors      TEXT
+            errors      TEXT,
+            strategy_checks TEXT
         )
     """)
+    # Migrate existing tables: add strategy_checks if missing
+    try:
+        conn.execute("ALTER TABLE consumer_signal_log ADD COLUMN strategy_checks TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     conn.close()
 
@@ -74,13 +80,14 @@ def init_db() -> None:
 def log_signal(signal_data: dict, response: dict) -> None:
     """Persist a signal and its processing result, then notify subscribers."""
     now = time.time()
+    strategy_checks = response.get("strategy_checks")
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.execute(
         """
         INSERT INTO consumer_signal_log
             (received_at, signal_json, action, signal_price, live_price,
-             signal_edge, live_edge, order_id, errors)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             signal_edge, live_edge, order_id, errors, strategy_checks)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now,
@@ -92,6 +99,7 @@ def log_signal(signal_data: dict, response: dict) -> None:
             response.get("live_edge"),
             response.get("order_id"),
             json.dumps(response.get("errors", [])),
+            json.dumps(strategy_checks) if strategy_checks else None,
         ),
     )
     conn.commit()
@@ -120,6 +128,7 @@ def get_signals(limit: int = 100) -> list[dict]:
     results = []
     for row in rows:
         signal = json.loads(row["signal_json"])
+        raw_checks = row["strategy_checks"] if "strategy_checks" in row.keys() else None
         results.append({
             "id": row["id"],
             "received_at": row["received_at"],
@@ -135,5 +144,6 @@ def get_signals(limit: int = 100) -> list[dict]:
             "live_edge": row["live_edge"],
             "order_id": row["order_id"],
             "errors": json.loads(row["errors"]) if row["errors"] else [],
+            "strategy_checks": json.loads(raw_checks) if raw_checks else None,
         })
     return results
