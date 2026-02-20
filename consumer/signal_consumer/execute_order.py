@@ -4,6 +4,10 @@ Execute an order on Polymarket after a successful simulation.
 Runs simulate_order first. If simulation passes, posts the signed order
 to the CLOB. Prints execution results including order ID and fill status.
 
+When consuming a signal (--signal), the consumer fetches the **live** market
+price from the CLOB orderbook and recalculates edge before executing.  If the
+edge has fallen below the threshold the trade is skipped.
+
 Usage:
     python -m signal_consumer.execute_order \
         --token-id <CLOB_TOKEN_ID> \
@@ -11,7 +15,7 @@ Usage:
         --price 0.50 \
         --size 10
 
-    # From a signal JSON file:
+    # From a signal JSON file (uses live price + edge check):
     python -m signal_consumer.execute_order --signal signal.json
 
     # Skip simulation (if you already validated):
@@ -22,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -38,6 +43,9 @@ from py_clob_client.order_builder.constants import BUY, SELL
 
 from .simulate_order import SimulationResult, simulate_order
 
+# Polymarket minimum order size
+MIN_ORDER_SIZE = 5
+
 
 @dataclass
 class ExecutionResult:
@@ -48,6 +56,11 @@ class ExecutionResult:
     order_id: str | None
     status: str | None
     errors: list[str]
+    # Signal-aware fields
+    signal_price: float | None = None   # Original price from signal
+    live_price: float | None = None     # Live price at execution time
+    signal_edge: float | None = None    # Original edge from signal
+    live_edge: float | None = None      # Recalculated edge at execution time
 
     def print_report(self):
         # Print simulation first
@@ -57,6 +70,12 @@ class ExecutionResult:
         print(f"{'='*60}")
         print(f"  Order Execution: {status}")
         print(f"{'='*60}")
+
+        if self.signal_price is not None:
+            print(f"  Signal Price:  ${self.signal_price:.4f}")
+            print(f"  Live Price:    ${self.live_price:.4f}")
+            print(f"  Signal Edge:   {self.signal_edge*100:.1f}%")
+            print(f"  Live Edge:     {self.live_edge*100:.1f}%")
 
         if self.order_id:
             print(f"  Order ID:  {self.order_id}")
@@ -77,6 +96,10 @@ class ExecutionResult:
             "order_id": self.order_id,
             "status": self.status,
             "errors": self.errors,
+            "signal_price": self.signal_price,
+            "live_price": self.live_price,
+            "signal_edge": self.signal_edge,
+            "live_edge": self.live_edge,
         }
 
 
@@ -105,6 +128,26 @@ def _init_client() -> ClobClient:
     )
 
 
+def _get_live_price(client: ClobClient, token_id: str, side: str) -> float | None:
+    """Fetch the current best price from the orderbook for the given side."""
+    try:
+        book = client.get_order_book(token_id)
+        if side.lower() == "buy":
+            asks = book.asks if book.asks else []
+            return float(asks[0].price) if asks else None
+        else:
+            bids = book.bids if book.bids else []
+            return float(bids[0].price) if bids else None
+    except Exception:
+        return None
+
+
+def _round_to_tick(price: float, tick_size: str) -> float:
+    """Round a price down to the nearest valid tick."""
+    tick = float(tick_size)
+    return math.floor(price / tick) * tick
+
+
 def execute_order(
     token_id: str,
     side: str,
@@ -120,6 +163,9 @@ def execute_order(
     2. If simulation passes, posts the order to the CLOB
     """
     errors: list[str] = []
+
+    if size < MIN_ORDER_SIZE:
+        size = float(MIN_ORDER_SIZE)
 
     # --- Step 1: Simulate ---
     if skip_simulation:
@@ -211,8 +257,110 @@ def execute_order(
         )
 
 
+def execute_signal_data(
+    data: dict,
+    order_type: str = "GTC",
+    skip_simulation: bool = False,
+    edge_threshold: float | None = None,
+) -> ExecutionResult:
+    """
+    Execute a trade from a signal dict with live price validation.
+
+    1. Reads signal fields (model_probability, market_price, edge, etc.)
+    2. Fetches live price from CLOB orderbook
+    3. Recalculates edge with live price
+    4. Skips if edge has fallen below threshold
+    5. Simulates and executes at the live price
+    """
+    if edge_threshold is None:
+        edge_threshold = float(os.environ.get("EDGE_THRESHOLD_PCT", "8")) / 100
+
+    token_id = data["token_id"]
+    side = data.get("side", "buy")
+    signal_price = data["market_price"]
+    model_prob = data["model_probability"]
+    signal_edge = data.get("edge", model_prob - signal_price)
+    position_size_usd = data["position_size_usd"]
+
+    # --- Fetch live price ---
+    try:
+        client = _init_client()
+    except Exception as e:
+        sim = SimulationResult(
+            success=False, token_id=token_id, side=side, price=signal_price,
+            size=0, tick_size="0.01", neg_risk=False, best_ask=None,
+            best_bid=None, spread=None, would_fill=False, fill_price=None,
+            estimated_cost_usd=0, order_signed=False,
+            errors=[f"Client init failed: {e}"],
+        )
+        return ExecutionResult(
+            success=False, simulation=sim, order_id=None, status=None,
+            errors=[f"Client init failed: {e}"],
+            signal_price=signal_price, live_price=None,
+            signal_edge=signal_edge, live_edge=None,
+        )
+
+    live_price = _get_live_price(client, token_id, side)
+
+    if live_price is None:
+        # No liquidity on the book — fall back to signal price
+        live_price = signal_price
+
+    # --- Recalculate edge with live price ---
+    live_edge = model_prob - live_price
+
+    if live_edge < edge_threshold:
+        sim = SimulationResult(
+            success=False, token_id=token_id, side=side, price=live_price,
+            size=0, tick_size="0.01", neg_risk=False, best_ask=None,
+            best_bid=None, spread=None, would_fill=False, fill_price=None,
+            estimated_cost_usd=0, order_signed=False,
+            errors=[f"Live edge {live_edge*100:.1f}% below threshold {edge_threshold*100:.1f}%"],
+        )
+        return ExecutionResult(
+            success=False, simulation=sim, order_id=None, status=None,
+            errors=[f"Edge evaporated: signal={signal_edge*100:.1f}%, live={live_edge*100:.1f}%, threshold={edge_threshold*100:.1f}%"],
+            signal_price=signal_price, live_price=live_price,
+            signal_edge=signal_edge, live_edge=live_edge,
+        )
+
+    # --- Compute order params at live price ---
+    size = position_size_usd / live_price
+    if size < MIN_ORDER_SIZE:
+        size = float(MIN_ORDER_SIZE)
+
+    # --- Execute at live price ---
+    result = execute_order(
+        token_id=token_id,
+        side=side,
+        price=live_price,
+        size=size,
+        order_type=order_type,
+        skip_simulation=skip_simulation,
+    )
+
+    # Attach signal context to the result
+    result.signal_price = signal_price
+    result.live_price = live_price
+    result.signal_edge = signal_edge
+    result.live_edge = live_edge
+
+    return result
+
+
+def execute_signal(
+    signal_path: str,
+    order_type: str = "GTC",
+    skip_simulation: bool = False,
+    edge_threshold: float | None = None,
+) -> ExecutionResult:
+    """Execute a trade from a signal JSON file. Delegates to execute_signal_data."""
+    data = json.loads(Path(signal_path).read_text())
+    return execute_signal_data(data, order_type, skip_simulation, edge_threshold)
+
+
 def _parse_signal_file(path: str) -> dict:
-    """Parse a signal JSON file into order params."""
+    """Parse a signal JSON file into order params (for manual --token-id style)."""
     data = json.loads(Path(path).read_text())
     return {
         "token_id": data["token_id"],
@@ -247,22 +395,24 @@ def main():
     args = parser.parse_args()
 
     if args.signal:
-        params = _parse_signal_file(args.signal)
+        # Signal-aware path: live price check + edge validation
+        result = execute_signal(
+            signal_path=args.signal,
+            order_type=args.order_type,
+            skip_simulation=args.skip_simulation,
+        )
     elif args.token_id and args.price and args.size:
-        params = {
-            "token_id": args.token_id,
-            "side": args.side,
-            "price": args.price,
-            "size": args.size,
-        }
+        # Manual path: use exact params provided
+        result = execute_order(
+            token_id=args.token_id,
+            side=args.side,
+            price=args.price,
+            size=args.size,
+            order_type=args.order_type,
+            skip_simulation=args.skip_simulation,
+        )
     else:
         parser.error("Provide either --signal or --token-id, --price, and --size")
-
-    result = execute_order(
-        **params,
-        order_type=args.order_type,
-        skip_simulation=args.skip_simulation,
-    )
 
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))

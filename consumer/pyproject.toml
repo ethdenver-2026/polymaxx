@@ -19,6 +19,9 @@ dependencies = [
     # Logging
     "structlog>=25.0.0",
 
+    # WebSocket server
+    "websockets>=14.0",
+
     # Utilities
     "python-dotenv>=1.0.0",
 ]
