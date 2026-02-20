@@ -29,6 +29,7 @@ _SCHEMA_COLUMNS: dict[str, str] = {
     "chosen_position_usd": "REAL",
     "horizon_hours": "REAL",
     "metadata_json": "TEXT",
+    "strategy_checks": "TEXT",
 }
 
 
@@ -74,17 +75,10 @@ def init_db() -> None:
             signal_edge  REAL,
             live_edge    REAL,
             order_id    TEXT,
-            errors      TEXT,
-            source_created_at TEXT,
-            source_published_at TEXT,
-            decision_status TEXT,
-            strategy_reasons_json TEXT,
-            balance_available_usdc REAL,
-            chosen_position_usd REAL,
-            horizon_hours REAL,
-            metadata_json TEXT
+            errors      TEXT
         )
     """)
+    # Idempotent migration: add columns that don't exist yet
     existing_cols = {
         row[1]
         for row in conn.execute("PRAGMA table_info(consumer_signal_log)").fetchall()
@@ -102,18 +96,14 @@ def log_signal(signal_data: dict, response: dict) -> None:
     """Persist a signal and its processing result, then notify subscribers."""
     now = time.time()
     init_db()
+    strategy_checks = response.get("strategy_checks")
     conn = sqlite3.connect(str(DB_PATH))
-    strategy_reasons = response.get("strategy_reasons", [])
-    if not isinstance(strategy_reasons, list):
-        strategy_reasons = [str(strategy_reasons)]
     cur = conn.execute(
         """
         INSERT INTO consumer_signal_log
             (received_at, signal_json, action, signal_price, live_price,
-             signal_edge, live_edge, order_id, errors, source_created_at,
-             source_published_at, decision_status, strategy_reasons_json,
-             balance_available_usdc, chosen_position_usd, horizon_hours, metadata_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             signal_edge, live_edge, order_id, errors, strategy_checks)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now,
@@ -125,14 +115,7 @@ def log_signal(signal_data: dict, response: dict) -> None:
             response.get("live_edge"),
             response.get("order_id"),
             json.dumps(response.get("errors", [])),
-            signal_data.get("created_at"),
-            signal_data.get("published_at"),
-            response.get("status"),
-            json.dumps(strategy_reasons),
-            response.get("balance_available_usdc"),
-            response.get("position_size_usd"),
-            response.get("horizon_hours"),
-            signal_data.get("metadata_json"),
+            json.dumps(strategy_checks) if strategy_checks else None,
         ),
     )
     conn.commit()
@@ -163,6 +146,7 @@ def get_signals(limit: int = 100) -> list[dict]:
     results = []
     for row in rows:
         signal = json.loads(row["signal_json"])
+        raw_checks = row["strategy_checks"] if "strategy_checks" in row.keys() else None
         results.append({
             "id": row["id"],
             "received_at": row["received_at"],
@@ -178,18 +162,7 @@ def get_signals(limit: int = 100) -> list[dict]:
             "live_edge": row["live_edge"],
             "order_id": row["order_id"],
             "errors": json.loads(row["errors"]) if row["errors"] else [],
-            "source_created_at": row["source_created_at"],
-            "source_published_at": row["source_published_at"],
-            "decision_status": row["decision_status"],
-            "strategy_reasons": (
-                json.loads(row["strategy_reasons_json"])
-                if row["strategy_reasons_json"]
-                else []
-            ),
-            "balance_available_usdc": row["balance_available_usdc"],
-            "chosen_position_usd": row["chosen_position_usd"],
-            "horizon_hours": row["horizon_hours"],
-            "metadata_json": row["metadata_json"],
+            "strategy_checks": json.loads(raw_checks) if raw_checks else None,
         })
     return results
 
