@@ -386,11 +386,13 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
                   </div>
                   <span
                     className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${
-                      s.action === "executed" || s.action === "simulated"
+                      s.action === "executed"
                         ? "bg-signal-green/15 text-signal-green border-signal-green/30"
-                        : s.action === "skipped"
-                          ? "bg-signal-amber/15 text-signal-amber border-signal-amber/30"
-                          : "bg-signal-red/15 text-signal-red border-signal-red/30"
+                        : s.action === "simulated"
+                          ? "bg-blue-500/15 text-blue-400 border-blue-500/30"
+                          : s.action === "skipped"
+                            ? "bg-purple-500/15 text-purple-400 border-purple-500/30"
+                            : "bg-signal-red/15 text-signal-red border-signal-red/30"
                     }`}
                   >
                     {s.action}
