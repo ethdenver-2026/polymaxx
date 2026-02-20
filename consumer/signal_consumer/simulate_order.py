@@ -29,6 +29,9 @@ from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs, PartialCreateOrderOptions
 from py_clob_client.order_builder.constants import BUY, SELL
 
+# Polymarket minimum order size
+MIN_ORDER_SIZE = 5
+
 
 @dataclass
 class SimulationResult:
@@ -139,6 +142,10 @@ def simulate_order(
     order_signed = False
     tick_size = "0.01"
     neg_risk = False
+
+    if size < MIN_ORDER_SIZE:
+        errors.append(f"Size {size} below Polymarket minimum ({MIN_ORDER_SIZE}), adjusting to {MIN_ORDER_SIZE}")
+        size = float(MIN_ORDER_SIZE)
 
     side_const = BUY if side.lower() == "buy" else SELL
 
