@@ -1,10 +1,4 @@
-"""
-Combined runner: starts the FastAPI REST server and WebSocket server together.
-
-Usage:
-    python -m signal_consumer.run
-    python -m signal_consumer.run --ws-port 8765 --api-port 8766
-"""
+"""Combined runner: dashboard API + producer websocket ingestion loop."""
 
 from __future__ import annotations
 
@@ -15,8 +9,9 @@ import threading
 import uvicorn
 from dotenv import load_dotenv
 
+from .config import get_settings
 from .db import init_db
-from .server import start_server
+from .ws_ingestion import consume_producer_signals
 
 logger = logging.getLogger("signal_consumer.run")
 
@@ -33,12 +28,12 @@ def _run_api(host: str, port: int) -> None:
 
 def main():
     load_dotenv()
+    settings = get_settings()
 
     import argparse
 
-    parser = argparse.ArgumentParser(description="Signal consumer (WebSocket + REST API)")
+    parser = argparse.ArgumentParser(description="Signal consumer (producer websocket + dashboard API)")
     parser.add_argument("--host", default="localhost", help="Bind address (default: localhost)")
-    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket port (default: 8765)")
     parser.add_argument("--api-port", type=int, default=8766, help="REST API port (default: 8766)")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
@@ -61,9 +56,8 @@ def main():
     api_thread.start()
     logger.info("REST API started on http://%s:%d", args.host, args.api_port)
 
-    # Run WebSocket server in the main async loop
-    logger.info("Starting WebSocket server on ws://%s:%d", args.host, args.ws_port)
-    asyncio.run(start_server(host=args.host, port=args.ws_port))
+    logger.info("Starting producer websocket ingestion loop: %s", settings.producer_ws_url)
+    asyncio.run(consume_producer_signals(settings))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,17 @@ DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "consumer_sig
 # Subscribers are queue.Queue instances — one per SSE connection.
 _subscribers: list[queue.Queue[dict]] = []
 _subscribers_lock = threading.Lock()
+_SCHEMA_COLUMNS: dict[str, str] = {
+    "source_created_at": "TEXT",
+    "source_published_at": "TEXT",
+    "decision_status": "TEXT",
+    "strategy_reasons_json": "TEXT",
+    "balance_available_usdc": "REAL",
+    "chosen_position_usd": "REAL",
+    "horizon_hours": "REAL",
+    "metadata_json": "TEXT",
+    "strategy_checks": "TEXT",
+}
 
 
 def subscribe() -> queue.Queue[dict]:
@@ -64,15 +75,19 @@ def init_db() -> None:
             signal_edge  REAL,
             live_edge    REAL,
             order_id    TEXT,
-            errors      TEXT,
-            strategy_checks TEXT
+            errors      TEXT
         )
     """)
-    # Migrate existing tables: add strategy_checks if missing
-    try:
-        conn.execute("ALTER TABLE consumer_signal_log ADD COLUMN strategy_checks TEXT")
-    except sqlite3.OperationalError:
-        pass  # column already exists
+    # Idempotent migration: add columns that don't exist yet
+    existing_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(consumer_signal_log)").fetchall()
+    }
+    for name, sql_type in _SCHEMA_COLUMNS.items():
+        if name not in existing_cols:
+            conn.execute(
+                f"ALTER TABLE consumer_signal_log ADD COLUMN {name} {sql_type}"
+            )
     conn.commit()
     conn.close()
 
@@ -80,6 +95,7 @@ def init_db() -> None:
 def log_signal(signal_data: dict, response: dict) -> None:
     """Persist a signal and its processing result, then notify subscribers."""
     now = time.time()
+    init_db()
     strategy_checks = response.get("strategy_checks")
     conn = sqlite3.connect(str(DB_PATH))
     cur = conn.execute(
@@ -111,12 +127,14 @@ def log_signal(signal_data: dict, response: dict) -> None:
         "id": row_id,
         "received_at": now,
         "action": response.get("action", "unknown"),
-        "description": signal_data.get("description", ""),
+        "status": response.get("status"),
+        "token_id": signal_data.get("token_id", ""),
     })
 
 
 def get_signals(limit: int = 100) -> list[dict]:
     """Retrieve recent signals from the log."""
+    init_db()
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
@@ -147,3 +165,22 @@ def get_signals(limit: int = 100) -> list[dict]:
             "strategy_checks": json.loads(raw_checks) if raw_checks else None,
         })
     return results
+
+
+def get_executed_notional_usd() -> float:
+    """Return cumulative notional for executed trades in consumer log."""
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(signal_json_extract.position_size_usd), 0.0)
+        FROM (
+            SELECT
+                json_extract(signal_json, '$.position_size_usd') AS position_size_usd
+            FROM consumer_signal_log
+            WHERE action IN ('executed', 'simulated')
+        ) AS signal_json_extract
+        """
+    ).fetchone()
+    conn.close()
+    return float(row[0] or 0.0)

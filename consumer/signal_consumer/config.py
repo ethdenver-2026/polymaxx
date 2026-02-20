@@ -17,8 +17,13 @@ class Settings(BaseSettings):
     trading_mode: Literal["paper", "live"] = Field(default="paper")
     weather_edge_threshold: float = Field(default=0.02, ge=0.0, le=1.0)
     max_slippage_abs: float = Field(default=0.05, ge=0.0, le=1.0)
+    bankroll_usdc: float = Field(default=50.0, gt=0.0)
+    max_position_usd: float = Field(default=5.0, gt=0.0)
+    min_position_usd: float = Field(default=1.0, gt=0.0)
     execution_workers: int = Field(default=16, ge=1)
     execution_queue_maxsize: int = Field(default=1000, ge=1)
+    producer_ws_url: str = Field(default="ws://127.0.0.1:8000/ws/signals")
+    producer_ws_reconnect_seconds: float = Field(default=2.0, ge=0.1)
 
     # Polymarket / CLOB
     polymarket_private_key: str = Field(default="")
