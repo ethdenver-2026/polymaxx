@@ -69,3 +69,10 @@ Thumbs.db
 *.key
 credentials.json
 .worktrees/
+
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
+
+# SQLite databases
+*.db

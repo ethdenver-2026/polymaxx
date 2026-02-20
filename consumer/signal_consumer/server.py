@@ -44,6 +44,7 @@ import websockets
 from dotenv import load_dotenv
 
 from .execute_order import execute_signal_data
+from .db import log_signal
 
 logger = logging.getLogger("signal_consumer.server")
 
@@ -125,6 +126,12 @@ async def _handle_signal(websocket):
                 f"{result.live_edge*100:.1f}%" if result.live_edge is not None else "N/A",
                 result.order_id or "none",
             )
+
+            # Persist signal + response to SQLite
+            try:
+                log_signal(data, response)
+            except Exception:
+                logger.exception("Failed to log signal to database")
 
             await websocket.send(json.dumps(response))
 
