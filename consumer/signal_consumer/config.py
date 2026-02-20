@@ -46,3 +46,22 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     return Settings()
 
+
+# ---------------------------------------------------------------------------
+# Runtime trading-mode override (survives without restarting the process)
+# ---------------------------------------------------------------------------
+_trading_mode_override: str | None = None
+
+
+def set_trading_mode(mode: str) -> None:
+    global _trading_mode_override
+    if mode not in ("paper", "live"):
+        raise ValueError(f"Invalid trading mode: {mode}")
+    _trading_mode_override = mode
+
+
+def get_trading_mode() -> str:
+    if _trading_mode_override is not None:
+        return _trading_mode_override
+    return get_settings().trading_mode
+

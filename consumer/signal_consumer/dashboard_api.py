@@ -15,16 +15,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse
 
+from pydantic import BaseModel
+
 from .balances import get_balances
-from .config import get_settings
-from .db import get_signals, subscribe, unsubscribe
+from .config import get_settings, get_trading_mode, set_trading_mode
+from .db import get_paper_positions, get_signals, log_signal, subscribe, unsubscribe
+from .signal_generator import generate_signal
 
 app = FastAPI(title="Signal Consumer Dashboard API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -76,8 +79,9 @@ def signals_stream():
 @app.get("/api/config")
 def config():
     s = get_settings()
+    mode = get_trading_mode()
 
-    if s.trading_mode == "live":
+    if mode == "live":
         try:
             b = get_balances()
             bankroll = b.polymarket_usdc
@@ -87,10 +91,46 @@ def config():
         bankroll = s.bankroll_usdc
 
     return {
-        "trading_mode": s.trading_mode,
+        "trading_mode": mode,
         "bankroll_usdc": bankroll,
         "max_position_usd": s.max_position_usd,
         "kelly_fraction": s.kelly_fraction,
         "edge_threshold_pct": s.edge_threshold_pct,
         "wallet_address": os.environ.get("POLYMARKET_WALLET_ADDRESS", ""),
+    }
+
+
+class TradingModeRequest(BaseModel):
+    mode: str
+
+
+@app.post("/api/config/trading-mode")
+def set_mode(body: TradingModeRequest):
+    try:
+        set_trading_mode(body.mode)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "trading_mode": body.mode}
+
+
+@app.get("/api/paper-positions")
+def paper_positions():
+    return get_paper_positions()
+
+
+@app.post("/api/generate-signal")
+async def generate_signal_endpoint():
+    """Generate a weather signal on demand from live APIs."""
+    result = await generate_signal()
+    signal_data = result["signal_data"]
+    response = result["response"]
+
+    if signal_data:
+        log_signal(signal_data, response)
+
+    return {
+        "ok": response["action"] not in ("error",),
+        "action": response["action"],
+        "signal": signal_data or None,
+        "errors": response.get("errors", []),
     }

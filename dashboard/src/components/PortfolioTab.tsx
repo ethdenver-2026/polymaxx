@@ -5,6 +5,9 @@ import {
   useSignals,
   useActivity,
   useConfig,
+  useGenerateSignal,
+  useSetTradingMode,
+  usePaperPositions,
 } from "@/hooks/queries";
 import { PnLChart } from "./PnLChart";
 
@@ -19,6 +22,8 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
   const { data: signals } = useSignals();
   const { data: activity } = useActivity(wallet);
   const { data: config } = useConfig();
+  const genSignal = useGenerateSignal();
+  const toggleMode = useSetTradingMode();
 
   // Computed from real data — don't trust the Data API's portfolio value
   const clobBalance = balances?.polymarket_usdc ?? 0;
@@ -49,6 +54,20 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
   const winRate = openCount > 0 ? ((winCount / openCount) * 100).toFixed(0) : "---";
 
   const isLive = config?.trading_mode === "live";
+  const { data: paperPositions } = usePaperPositions(!isLive);
+
+  // Paper-mode aggregates
+  const paperTotalNotional = paperPositions?.reduce((s, p) => s + (p.size_usd ?? 0), 0) ?? 0;
+  const paperPositionCount = paperPositions?.length ?? 0;
+
+  // Pick values based on mode
+  const displayPortfolioValue = isLive ? portfolioValue : (config?.bankroll_usdc ?? 0);
+  const displayPnl = isLive ? pnl : 0;
+  const displayPnlPct = isLive ? pnlPct : 0;
+  const displayInPositions = isLive ? totalPositionValue : paperTotalNotional;
+  const displayFreeCash = isLive ? clobBalance : (config?.bankroll_usdc ?? 0) - paperTotalNotional;
+  const displayOpenCount = isLive ? openCount : paperPositionCount;
+  const displayPositionPnl = isLive ? totalPositionPnl : 0;
 
   return (
     <div className="space-y-4">
@@ -65,30 +84,30 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
       >
         <div>
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
-            Portfolio Value
+            {isLive ? "Portfolio Value" : "Paper Portfolio"}
           </div>
           <div className="text-4xl font-bold num tracking-tight">
-            {isLoading ? (
+            {isLoading && isLive ? (
               <span className="text-muted-foreground">---</span>
             ) : (
-              `$${portfolioValue.toFixed(2)}`
+              `$${displayPortfolioValue.toFixed(2)}`
             )}
           </div>
-          {!isLoading && (
+          {!(isLoading && isLive) && (
             <div className="flex items-baseline gap-3 mt-1.5">
               <span
                 className={`text-lg font-semibold num ${
-                  isUp ? "text-signal-green" : isDown ? "text-signal-red" : "text-muted-foreground"
+                  displayPnl > 0 ? "text-signal-green" : displayPnl < 0 ? "text-signal-red" : "text-muted-foreground"
                 }`}
               >
-                {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}
+                {displayPnl >= 0 ? "+" : ""}${displayPnl.toFixed(2)}
               </span>
               <span
                 className={`text-sm num ${
-                  isUp ? "text-signal-green/70" : isDown ? "text-signal-red/70" : "text-muted-foreground"
+                  displayPnl > 0 ? "text-signal-green/70" : displayPnl < 0 ? "text-signal-red/70" : "text-muted-foreground"
                 }`}
               >
-                ({pnlPct >= 0 ? "+" : ""}{(pnlPct * 100).toFixed(2)}%)
+                ({displayPnlPct >= 0 ? "+" : ""}{(displayPnlPct * 100).toFixed(2)}%)
               </span>
             </div>
           )}
@@ -98,19 +117,21 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
         <div className="flex flex-col justify-center gap-2 min-w-[160px] border-l border-[#1e2235] pl-6">
           <div className="flex items-center justify-between gap-4">
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground">In Positions</span>
-            <span className="text-sm font-semibold num">${totalPositionValue.toFixed(2)}</span>
+            <span className="text-sm font-semibold num">${displayInPositions.toFixed(2)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground">Free Cash</span>
             <span className="text-sm font-semibold num">
-              {balLoading ? "---" : `$${clobBalance.toFixed(2)}`}
+              {isLive && balLoading ? "---" : `$${displayFreeCash.toFixed(2)}`}
             </span>
           </div>
           <div className="h-px bg-[#1e2235] my-0.5" />
           <div className="flex items-center justify-between gap-4">
-            <span className="text-[10px] uppercase tracking-widest text-muted-foreground">Deposited</span>
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+              {isLive ? "Deposited" : "Bankroll"}
+            </span>
             <span className="text-xs num text-muted-foreground">
-              {isLoading ? "---" : `$${deposited.toFixed(2)}`}
+              {isLive ? (isLoading ? "---" : `$${deposited.toFixed(2)}`) : `$${(config?.bankroll_usdc ?? 0).toFixed(2)}`}
             </span>
           </div>
         </div>
@@ -120,9 +141,9 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-px bg-[#1e2235] rounded-lg overflow-hidden">
         <MetricCell
           label="Open Positions"
-          value={openCount.toString()}
-          sub={`${totalPositionPnl >= 0 ? "+" : ""}$${totalPositionPnl.toFixed(2)} unrealized`}
-          subColor={totalPositionPnl >= 0 ? "text-signal-green" : "text-signal-red"}
+          value={displayOpenCount.toString()}
+          sub={`${displayPositionPnl >= 0 ? "+" : ""}$${displayPositionPnl.toFixed(2)} unrealized`}
+          subColor={displayPositionPnl >= 0 ? "text-signal-green" : "text-signal-red"}
         />
         <MetricCell
           label="Win Rate"
@@ -139,12 +160,23 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
           value={hitRate === "---" ? hitRate : `${hitRate}%`}
           sub="of signals received"
         />
-        <MetricCell
-          label="Mode"
-          value={isLive ? "LIVE" : "PAPER"}
-          valueColor={isLive ? "text-signal-red" : "text-signal-amber"}
-          sub={`Edge >${config?.edge_threshold_pct ?? "---"}%`}
-        />
+        <div className="bg-[#0c0e14] px-4 py-3">
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
+            Mode
+          </div>
+          <button
+            onClick={() => toggleMode.mutate(isLive ? "paper" : "live")}
+            disabled={toggleMode.isPending}
+            className={`text-lg font-bold num cursor-pointer transition-colors hover:opacity-80 disabled:opacity-50 ${
+              isLive ? "text-signal-red" : "text-signal-amber"
+            }`}
+          >
+            {isLive ? "LIVE" : "PAPER"}
+          </button>
+          <div className="text-[10px] mt-0.5 text-muted-foreground">
+            Edge &gt;{config?.edge_threshold_pct ?? "---"}% &middot; click to toggle
+          </div>
+        </div>
       </div>
 
       {/* === TIER 3: P&L chart === */}
@@ -156,69 +188,124 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
         <div className="lg:col-span-3 glow-card rounded-lg overflow-hidden">
           <div className="border-b border-[#1e2235] px-4 py-2 flex items-center justify-between">
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-              Open Positions
+              {isLive ? "Open Positions" : "Paper Positions"}
             </span>
-            <span className={`text-xs font-semibold num ${totalPositionPnl >= 0 ? "text-signal-green" : "text-signal-red"}`}>
-              {totalPositionPnl >= 0 ? "+" : ""}${totalPositionPnl.toFixed(2)}
+            <span className={`text-xs font-semibold num ${displayPositionPnl >= 0 ? "text-signal-green" : "text-signal-red"}`}>
+              {displayPositionPnl >= 0 ? "+" : ""}${displayPositionPnl.toFixed(2)}
             </span>
           </div>
 
-          {!positions || positions.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              No open positions
-            </div>
+          {isLive ? (
+            /* ---- LIVE positions table ---- */
+            !positions || positions.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No open positions
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-[#1e2235]">
+                      <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Market</th>
+                      <th className="text-center px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Side</th>
+                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Size</th>
+                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Avg</th>
+                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Cur</th>
+                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Value</th>
+                      <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">P&L</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positions.slice(0, 8).map((p, i) => {
+                      const pl = p.cashPnl ?? 0;
+                      const plPct = ((p.percentPnl ?? 0) * 100).toFixed(1);
+                      return (
+                        <tr
+                          key={`${p.conditionId ?? i}-${i}`}
+                          className="border-b border-[#1e2235]/30 hover:bg-[#4ade8008] transition-colors"
+                        >
+                          <td className="px-4 py-2 max-w-[240px] truncate">{p.title ?? "---"}</td>
+                          <td className="px-3 py-2 text-center">
+                            <span className={`text-[10px] font-semibold uppercase ${
+                              p.outcome === "Yes" ? "text-signal-green" : "text-signal-red"
+                            }`}>
+                              {p.outcome ?? "---"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right num">{(p.size ?? 0).toFixed(1)}</td>
+                          <td className="px-3 py-2 text-right num text-muted-foreground">{((p.avgPrice ?? 0) * 100).toFixed(1)}¢</td>
+                          <td className="px-3 py-2 text-right num">{((p.curPrice ?? 0) * 100).toFixed(1)}¢</td>
+                          <td className="px-3 py-2 text-right num">${(p.currentValue ?? 0).toFixed(2)}</td>
+                          <td className={`px-4 py-2 text-right font-semibold num ${
+                            pl > 0 ? "text-signal-green" : pl < 0 ? "text-signal-red" : "text-muted-foreground"
+                          }`}>
+                            {pl >= 0 ? "+" : ""}${pl.toFixed(2)}
+                            <span className="text-[10px] text-muted-foreground ml-1">({plPct}%)</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {positions.length > 8 && (
+                  <div className="px-4 py-2 text-[10px] text-muted-foreground text-center border-t border-[#1e2235]/30">
+                    +{positions.length - 8} more positions
+                  </div>
+                )}
+              </>
+            )
           ) : (
-            <>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-[#1e2235]">
-                    <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Market</th>
-                    <th className="text-center px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Side</th>
-                    <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Size</th>
-                    <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Avg</th>
-                    <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Cur</th>
-                    <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Value</th>
-                    <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">P&L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.slice(0, 8).map((p, i) => {
-                    const pl = p.cashPnl ?? 0;
-                    const plPct = ((p.percentPnl ?? 0) * 100).toFixed(1);
-                    return (
+            /* ---- PAPER positions table ---- */
+            !paperPositions || paperPositions.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No paper positions &mdash; generate a signal to start
+              </div>
+            ) : (
+              <>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-[#1e2235]">
+                      <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Market</th>
+                      <th className="text-center px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Side</th>
+                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Size</th>
+                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Entry</th>
+                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Model P</th>
+                      <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Edge</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paperPositions.slice(0, 8).map((p, i) => (
                       <tr
-                        key={`${p.conditionId ?? i}-${i}`}
+                        key={`${p.token_id}-${i}`}
                         className="border-b border-[#1e2235]/30 hover:bg-[#4ade8008] transition-colors"
                       >
-                        <td className="px-4 py-2 max-w-[240px] truncate">{p.title ?? "---"}</td>
+                        <td className="px-4 py-2 max-w-[240px] truncate">{p.description || p.token_id.slice(0, 20) + "..."}</td>
                         <td className="px-3 py-2 text-center">
                           <span className={`text-[10px] font-semibold uppercase ${
-                            p.outcome === "Yes" ? "text-signal-green" : "text-signal-red"
+                            p.side === "buy" ? "text-signal-green" : "text-signal-red"
                           }`}>
-                            {p.outcome ?? "---"}
+                            {p.side}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-right num">{(p.size ?? 0).toFixed(1)}</td>
-                        <td className="px-3 py-2 text-right num text-muted-foreground">{((p.avgPrice ?? 0) * 100).toFixed(1)}¢</td>
-                        <td className="px-3 py-2 text-right num">{((p.curPrice ?? 0) * 100).toFixed(1)}¢</td>
-                        <td className="px-3 py-2 text-right num">${(p.currentValue ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right num">${(p.size_usd ?? 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right num text-muted-foreground">{((p.entry_price ?? 0) * 100).toFixed(1)}¢</td>
+                        <td className="px-3 py-2 text-right num">{((p.model_probability ?? 0) * 100).toFixed(1)}%</td>
                         <td className={`px-4 py-2 text-right font-semibold num ${
-                          pl > 0 ? "text-signal-green" : pl < 0 ? "text-signal-red" : "text-muted-foreground"
+                          (p.edge ?? 0) > 0 ? "text-signal-green" : "text-muted-foreground"
                         }`}>
-                          {pl >= 0 ? "+" : ""}${pl.toFixed(2)}
-                          <span className="text-[10px] text-muted-foreground ml-1">({plPct}%)</span>
+                          {((p.edge ?? 0) * 100).toFixed(1)}%
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {positions.length > 8 && (
-                <div className="px-4 py-2 text-[10px] text-muted-foreground text-center border-t border-[#1e2235]/30">
-                  +{positions.length - 8} more positions
-                </div>
-              )}
-            </>
+                    ))}
+                  </tbody>
+                </table>
+                {paperPositions.length > 8 && (
+                  <div className="px-4 py-2 text-[10px] text-muted-foreground text-center border-t border-[#1e2235]/30">
+                    +{paperPositions.length - 8} more positions
+                  </div>
+                )}
+              </>
+            )
           )}
         </div>
 
@@ -228,9 +315,15 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
               Recent Signals
             </span>
-            <span className="text-[10px] text-muted-foreground num">
-              last 24h
-            </span>
+            {!isLive && (
+              <button
+                onClick={() => genSignal.mutate()}
+                disabled={genSignal.isPending}
+                className="px-2.5 py-1 text-[10px] uppercase tracking-wider font-semibold rounded border transition-colors bg-signal-green/10 text-signal-green border-signal-green/30 hover:bg-signal-green/20 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {genSignal.isPending ? "Generating\u2026" : "Generate Signal"}
+              </button>
+            )}
           </div>
 
           {recentSignals.length === 0 ? (
