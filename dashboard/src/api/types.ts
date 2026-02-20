@@ -62,6 +62,13 @@ export interface Balances {
   error?: string;
 }
 
+export interface StrategyCheckData {
+  name: string;
+  passed: boolean;
+  detail: string;
+  data: Record<string, unknown>;
+}
+
 export interface ConsumerSignal {
   id: number;
   received_at: number;
@@ -77,6 +84,7 @@ export interface ConsumerSignal {
   live_edge: number | null;
   order_id: string | null;
   errors: string[];
+  strategy_checks: StrategyCheckData[] | null;
 }
 
 export interface ConsumerConfig {

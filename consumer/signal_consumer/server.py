@@ -43,7 +43,8 @@ import logging
 import websockets
 from dotenv import load_dotenv
 
-from .execute_order import execute_signal_data
+from .execute_order import execute_order, MIN_ORDER_SIZE
+from .strategy import run_strategy
 from .db import log_signal
 
 logger = logging.getLogger("signal_consumer.server")
@@ -95,36 +96,64 @@ async def _handle_signal(websocket):
                 await websocket.send(json.dumps(response))
                 continue
 
-            # Execute in a thread to avoid blocking the event loop
-            # (py-clob-client uses synchronous requests internally)
+            # Run strategy checks in a thread (py-clob-client is synchronous)
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None, lambda: execute_signal_data(data)
+            strategy_result = await loop.run_in_executor(
+                None, lambda: run_strategy(data)
             )
 
-            if result.success:
-                action = "executed"
-            elif result.live_edge is not None and not result.success:
-                action = "skipped"
-            else:
-                action = "error"
+            strategy_checks = strategy_result.checks_as_dicts()
 
-            response = {
-                "action": action,
-                "signal_price": result.signal_price,
-                "live_price": result.live_price,
-                "signal_edge": result.signal_edge,
-                "live_edge": result.live_edge,
-                "order_id": result.order_id,
-                "status": result.status,
-                "errors": result.errors,
-            }
+            if strategy_result.should_trade:
+                # Strategy passed — execute the order
+                side = data.get("side", "buy")
+                size = strategy_result.adjusted_position_usd / strategy_result.adjusted_price
+                if size < MIN_ORDER_SIZE:
+                    size = float(MIN_ORDER_SIZE)
+
+                exec_result = await loop.run_in_executor(
+                    None,
+                    lambda: execute_order(
+                        token_id=data["token_id"],
+                        side=side,
+                        price=strategy_result.adjusted_price,
+                        size=size,
+                    ),
+                )
+
+                action = "executed" if exec_result.success else "error"
+                response = {
+                    "action": action,
+                    "signal_price": data["market_price"],
+                    "live_price": strategy_result.adjusted_price,
+                    "signal_edge": strategy_result.signal_edge,
+                    "live_edge": strategy_result.live_edge,
+                    "order_id": exec_result.order_id,
+                    "status": exec_result.status,
+                    "errors": exec_result.errors,
+                    "strategy_checks": strategy_checks,
+                }
+            else:
+                # Strategy rejected the signal
+                action = "skipped"
+                response = {
+                    "action": action,
+                    "signal_price": data["market_price"],
+                    "live_price": strategy_result.adjusted_price,
+                    "signal_edge": strategy_result.signal_edge,
+                    "live_edge": strategy_result.live_edge,
+                    "order_id": None,
+                    "status": None,
+                    "errors": [strategy_result.skip_reason] if strategy_result.skip_reason else [],
+                    "strategy_checks": strategy_checks,
+                }
 
             logger.info(
-                "Signal processed: action=%s, live_edge=%s, order_id=%s",
+                "Signal processed: action=%s, live_edge=%s, order_id=%s, skip=%s",
                 action,
-                f"{result.live_edge*100:.1f}%" if result.live_edge is not None else "N/A",
-                result.order_id or "none",
+                f"{strategy_result.live_edge*100:.1f}%" if strategy_result.live_edge is not None else "N/A",
+                response.get("order_id") or "none",
+                strategy_result.skip_reason or "n/a",
             )
 
             # Persist signal + response to SQLite
