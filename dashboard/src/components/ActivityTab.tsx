@@ -55,7 +55,7 @@ export function ActivityTab({ wallet }: ActivityTabProps) {
                 className="border-b border-[#1e2235]/50 hover:bg-[#4ade8008] transition-colors"
               >
                 <td className="px-4 py-2.5 whitespace-nowrap text-muted-foreground num">
-                  {new Date(a.timestamp).toLocaleString([], {
+                  {new Date(typeof a.timestamp === "number" ? a.timestamp * 1000 : a.timestamp).toLocaleString([], {
                     month: "short", day: "numeric",
                     hour: "2-digit", minute: "2-digit",
                   })}
