@@ -24,6 +24,10 @@ dependencies = [
 
     # Utilities
     "python-dotenv>=1.0.0",
+
+    # REST API for dashboard
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
 ]
 
 [project.optional-dependencies]
