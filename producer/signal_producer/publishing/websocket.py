@@ -105,7 +105,6 @@ class SignalBroadcaster:
             "confidence": record.confidence,
             "decision": record.decision,
             "skip_reason": record.skip_reason,
-            "trade_id": record.trade_id,
             "created_at": record.created_at,
             "metadata_json": record.metadata_json,
         }

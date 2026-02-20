@@ -105,6 +105,7 @@ class ProducerOrchestrator:
             registry=self._registry,
             open_meteo_client=self._open_meteo,
             broadcaster=self._broadcaster,
+            engine=self._engine,
             edge_threshold=self._edge_threshold,
             forecast_interval=self._forecast_interval,
         )

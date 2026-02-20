@@ -9,12 +9,11 @@ from datetime import UTC, datetime
 import structlog
 
 from .config import get_settings, DEFAULT_CITIES
-from .models.models import SignalRecord, get_session
+from .models.models import SignalRecord, get_session, init_db
 from .publishing.websocket import broadcaster
 from .signals.types import ProducerSignal, WeatherMetadata, PolymarketInfo
 from .strategies.weather import WeatherStrategy
 from .strategies.base import Signal
-from .trading.executor import TradeExecutor
 
 
 # Configure structured logging
@@ -47,15 +46,14 @@ def _build_signal_record(signal: Signal) -> SignalRecord:
         confidence=signal.confidence,
         decision="trade",
         skip_reason=None,
-        trade_id=None,
         created_at=datetime.now(UTC).replace(tzinfo=None),
         metadata_json=metadata_json,
     )
 
 
-def _persist_signal_record_sync(executor: TradeExecutor, record: SignalRecord) -> None:
+def _persist_signal_record_sync(engine, record: SignalRecord) -> None:
     """Persist a signal record using the producer DB engine."""
-    session = get_session(executor.engine)
+    session = get_session(engine)
     try:
         session.add(record)
         session.commit()
@@ -101,21 +99,19 @@ def _build_producer_signal(signal: Signal) -> ProducerSignal:
 
 
 async def run_once(cities: list[str] | None = None, broadcast_signals: bool = False) -> list:
-    """Run a single trading cycle."""
+    """Run a single signal generation cycle."""
     settings = get_settings()
     city_list = cities or DEFAULT_CITIES
 
     logger.info(
-        "Starting trading cycle",
-        mode=settings.trading_mode,
+        "Starting signal generation",
         cities=city_list,
-        bankroll=f"${settings.bankroll_usdc:.2f}",
         edge_threshold=f"{settings.edge_threshold_pct:.1f}%",
     )
 
     # Initialize components
     strategy = WeatherStrategy(settings, cities=city_list)
-    executor = TradeExecutor(settings)
+    engine = init_db()
 
     # Generate signals (async)
     result = await strategy.generate_signals()
@@ -131,11 +127,11 @@ async def run_once(cities: list[str] | None = None, broadcast_signals: bool = Fa
         for error in result.errors:
             logger.warning("Strategy error", error=error)
 
-    # Publish signals only when explicitly enabled (e.g., websocket server context).
+    # Persist and optionally broadcast signals
     for signal in result.signals:
         producer_signal = _build_producer_signal(signal)
         signal_record = _build_signal_record(signal)
-        persist_task = asyncio.create_task(asyncio.to_thread(_persist_signal_record_sync, executor, signal_record))
+        persist_task = asyncio.create_task(asyncio.to_thread(_persist_signal_record_sync, engine, signal_record))
         publish_task: asyncio.Task[None] | None = None
         if broadcast_signals:
             publish_task = asyncio.create_task(broadcaster.broadcast_producer_signal(producer_signal))
@@ -155,17 +151,9 @@ async def run_once(cities: list[str] | None = None, broadcast_signals: bool = Fa
                 token_id=signal_record.token_id,
             )
 
-    # Execute trades
-    trades_executed = 0
-    for signal in result.signals:
-        exec_result = executor.execute(signal)
-        if exec_result.success:
-            trades_executed += 1
-
     logger.info(
         "Cycle complete",
         signals=len(result.signals),
-        trades_executed=trades_executed,
     )
 
     return result.signals
