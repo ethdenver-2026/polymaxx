@@ -34,8 +34,8 @@ class MockEnsembleForecast:
 
 
 @dataclass
-class MockWeatherBucket:
-    """Mock weather bucket for testing."""
+class MockWeatherMarket:
+    """Mock weather market for testing."""
 
     question: str
     low_temp: float | None
@@ -48,12 +48,16 @@ class MockWeatherBucket:
     closed: bool = False
 
     def contains_temp(self, temp: float) -> bool:
-        """Check if a temperature falls within this bucket."""
+        """Check if a temperature falls within this market range."""
         if self.low_temp is None:
             return temp < self.high_temp
         if self.high_temp is None:
             return temp >= self.low_temp
         return self.low_temp <= temp < self.high_temp
+
+
+# Backwards compatibility alias
+MockWeatherBucket = MockWeatherMarket
 
 
 @dataclass
@@ -65,12 +69,21 @@ class MockWeatherEvent:
     city: str
     target_date: date
     resolution_source: str
-    buckets: list[MockWeatherBucket]
+    markets: list[MockWeatherMarket]
     closed: bool = False
 
     @property
-    def active_buckets(self) -> list[MockWeatherBucket]:
-        return [b for b in self.buckets if b.active and not b.closed]
+    def active_markets(self) -> list[MockWeatherMarket]:
+        return [m for m in self.markets if m.active and not m.closed]
+
+    # Backwards compatibility aliases
+    @property
+    def buckets(self) -> list[MockWeatherMarket]:
+        return self.markets
+
+    @property
+    def active_buckets(self) -> list[MockWeatherMarket]:
+        return self.active_markets
 
 
 @pytest.fixture
@@ -122,9 +135,9 @@ def wide_ensemble() -> MockEnsembleForecast:
 
 
 @pytest.fixture
-def sample_bucket() -> MockWeatherBucket:
-    """Standard weather bucket for testing."""
-    return MockWeatherBucket(
+def sample_bucket() -> MockWeatherMarket:
+    """Standard weather market for testing."""
+    return MockWeatherMarket(
         question="Will the highest temperature be between 42-43°F?",
         low_temp=42.0,
         high_temp=44.0,  # Exclusive upper bound
@@ -134,9 +147,9 @@ def sample_bucket() -> MockWeatherBucket:
 
 
 @pytest.fixture
-def below_bucket() -> MockWeatherBucket:
-    """'X or below' bucket."""
-    return MockWeatherBucket(
+def below_bucket() -> MockWeatherMarket:
+    """'X or below' market."""
+    return MockWeatherMarket(
         question="Will the highest temperature be 39°F or below?",
         low_temp=None,
         high_temp=40.0,  # 39 or below means < 40
@@ -146,9 +159,9 @@ def below_bucket() -> MockWeatherBucket:
 
 
 @pytest.fixture
-def above_bucket() -> MockWeatherBucket:
-    """'X or above' bucket."""
-    return MockWeatherBucket(
+def above_bucket() -> MockWeatherMarket:
+    """'X or above' market."""
+    return MockWeatherMarket(
         question="Will the highest temperature be 46°F or higher?",
         low_temp=46.0,
         high_temp=None,
@@ -159,12 +172,12 @@ def above_bucket() -> MockWeatherBucket:
 
 @pytest.fixture
 def sample_event(sample_bucket, below_bucket, above_bucket) -> MockWeatherEvent:
-    """Standard weather event with multiple buckets."""
+    """Standard weather event with multiple markets."""
     return MockWeatherEvent(
         event_id="mock_event_123",
         title="Highest temperature in NYC on February 20?",
         city="nyc",
         target_date=date(2026, 2, 20),
         resolution_source="https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA",
-        buckets=[below_bucket, sample_bucket, above_bucket],
+        markets=[below_bucket, sample_bucket, above_bucket],
     )

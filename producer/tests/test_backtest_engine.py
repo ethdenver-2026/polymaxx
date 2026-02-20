@@ -87,10 +87,10 @@ class TestBacktestEngine:
 
     def test_bucket_contains_temp_range(self):
         """Test temperature containment for range bucket."""
-        from signal_producer.strategies.weather.markets import WeatherBucket
+        from signal_producer.strategies.weather.markets import WeatherMarket
 
         engine = BacktestEngine()
-        bucket = WeatherBucket(
+        market = WeatherMarket(
             question="80-82°F",
             yes_price=0.2,
             no_price=0.8,
@@ -102,17 +102,17 @@ class TestBacktestEngine:
             closed=False,
         )
 
-        assert engine._bucket_contains_temp(bucket, 80.0) is True
-        assert engine._bucket_contains_temp(bucket, 81.5) is True
-        assert engine._bucket_contains_temp(bucket, 82.0) is False  # Exclusive upper
-        assert engine._bucket_contains_temp(bucket, 79.9) is False
+        assert engine._market_contains_temp(market, 80.0) is True
+        assert engine._market_contains_temp(market, 81.5) is True
+        assert engine._market_contains_temp(market, 82.0) is False  # Exclusive upper
+        assert engine._market_contains_temp(market, 79.9) is False
 
     def test_bucket_contains_temp_or_below(self):
         """Test 'X or below' bucket."""
-        from signal_producer.strategies.weather.markets import WeatherBucket
+        from signal_producer.strategies.weather.markets import WeatherMarket
 
         engine = BacktestEngine()
-        bucket = WeatherBucket(
+        market = WeatherMarket(
             question="31°F or below",
             yes_price=0.1,
             no_price=0.9,
@@ -124,16 +124,16 @@ class TestBacktestEngine:
             closed=False,
         )
 
-        assert engine._bucket_contains_temp(bucket, 30.0) is True
-        assert engine._bucket_contains_temp(bucket, 31.0) is True
-        assert engine._bucket_contains_temp(bucket, 32.0) is False
+        assert engine._market_contains_temp(market, 30.0) is True
+        assert engine._market_contains_temp(market, 31.0) is True
+        assert engine._market_contains_temp(market, 32.0) is False
 
     def test_bucket_contains_temp_or_above(self):
         """Test 'X or above' bucket."""
-        from signal_producer.strategies.weather.markets import WeatherBucket
+        from signal_producer.strategies.weather.markets import WeatherMarket
 
         engine = BacktestEngine()
-        bucket = WeatherBucket(
+        market = WeatherMarket(
             question="46°F or above",
             yes_price=0.1,
             no_price=0.9,
@@ -145,13 +145,13 @@ class TestBacktestEngine:
             closed=False,
         )
 
-        assert engine._bucket_contains_temp(bucket, 46.0) is True
-        assert engine._bucket_contains_temp(bucket, 50.0) is True
-        assert engine._bucket_contains_temp(bucket, 45.0) is False
+        assert engine._market_contains_temp(market, 46.0) is True
+        assert engine._market_contains_temp(market, 50.0) is True
+        assert engine._market_contains_temp(market, 45.0) is False
 
     def test_calculate_model_prob(self):
         """Test model probability calculation."""
-        from signal_producer.strategies.weather.markets import WeatherBucket
+        from signal_producer.strategies.weather.markets import WeatherMarket
 
         engine = BacktestEngine()
 
@@ -163,7 +163,7 @@ class TestBacktestEngine:
             member_temps=[80.0, 80.5, 81.0, 81.5, 82.0, 82.5, 83.0, 84.0, 85.0, 86.0],
         )
 
-        bucket = WeatherBucket(
+        market = WeatherMarket(
             question="80-82°F",
             yes_price=0.2,
             no_price=0.8,
@@ -176,7 +176,7 @@ class TestBacktestEngine:
         )
 
         # Members in bucket: 80.0, 80.5, 81.0, 81.5 = 4 out of 10
-        prob = engine._calculate_model_prob(ensemble, bucket)
+        prob = engine._calculate_model_prob(ensemble, market)
         assert prob == 0.4
 
     @pytest.mark.asyncio

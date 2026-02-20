@@ -11,6 +11,7 @@ import structlog
 from fastapi import WebSocket
 
 from ..models.models import SignalRecord
+from ..signals.types import ProducerSignal
 from ..strategies.base import Signal
 
 logger = structlog.get_logger()
@@ -109,6 +110,20 @@ class SignalBroadcaster:
             "metadata_json": record.metadata_json,
         }
         await self._broadcast_payload(_json_safe(payload), market_id=record.market_id, token_id=record.token_id)
+
+    async def broadcast_producer_signal(self, signal: ProducerSignal) -> None:
+        """Broadcast a ProducerSignal to all connected clients."""
+        payload = _json_safe(asdict(signal))
+
+        # Extract identifiers from first exchange for logging
+        market_id = ""
+        token_id = ""
+        if signal.exchanges:
+            first_exchange = signal.exchanges[0]
+            market_id = first_exchange.get("event_id", "")
+            token_id = first_exchange.get("token_id", "")
+
+        await self._broadcast_payload(payload, market_id=market_id, token_id=token_id)
 
 
 broadcaster = SignalBroadcaster()

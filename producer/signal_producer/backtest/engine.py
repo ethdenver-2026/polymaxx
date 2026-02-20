@@ -16,7 +16,7 @@ import httpx
 import structlog
 
 from ..config import CITIES, CityConfig
-from ..strategies.weather.markets import WeatherBucket
+from ..strategies.weather.markets import WeatherMarket
 from ..strategies.weather.open_meteo import OpenMeteoClient, EnsembleForecast
 from ..trading.kelly import calculate_kelly_position, calculate_edge
 
@@ -164,42 +164,42 @@ class BacktestEngine:
                 logger.debug("Failed to fetch historical price", token=token_id, error=str(e))
                 return None
 
-    async def _get_bucket_historical_prices(
+    async def _get_market_historical_prices(
         self,
-        buckets: list[WeatherBucket],
+        markets: list[WeatherMarket],
         forecast_timestamp: int,
     ) -> dict[str, float]:
-        """Get historical prices for all buckets at forecast time.
+        """Get historical prices for all markets at forecast time.
 
         Returns:
             Dict mapping yes_token_id to historical price
         """
         prices = {}
-        for bucket in buckets:
-            price = await self._get_historical_price(bucket.yes_token_id, forecast_timestamp)
+        for market in markets:
+            price = await self._get_historical_price(market.yes_token_id, forecast_timestamp)
             if price is not None:
-                prices[bucket.yes_token_id] = price
+                prices[market.yes_token_id] = price
         return prices
 
-    def _parse_buckets(self, event_data: dict) -> list[WeatherBucket]:
-        """Parse bucket markets from event data."""
+    def _parse_markets(self, event_data: dict) -> list[WeatherMarket]:
+        """Parse weather markets from event data."""
         from ..strategies.weather.markets import parse_temp_range
 
-        buckets = []
-        for market in event_data.get("markets", []):
+        weather_markets = []
+        for market_data in event_data.get("markets", []):
             try:
-                prices = json.loads(market.get("outcomePrices", "[]"))
-                tokens = json.loads(market.get("clobTokenIds", "[]"))
+                prices = json.loads(market_data.get("outcomePrices", "[]"))
+                tokens = json.loads(market_data.get("clobTokenIds", "[]"))
             except json.JSONDecodeError:
                 continue
 
             if len(prices) < 2 or len(tokens) < 2:
                 continue
 
-            question = market.get("question", "")
+            question = market_data.get("question", "")
             low, high = parse_temp_range(question)
 
-            buckets.append(WeatherBucket(
+            weather_markets.append(WeatherMarket(
                 question=question,
                 low_temp=low,
                 high_temp=high,
@@ -207,11 +207,11 @@ class BacktestEngine:
                 no_price=float(prices[1]),
                 yes_token_id=tokens[0],
                 no_token_id=tokens[1],
-                active=market.get("active", True),
-                closed=market.get("closed", False),
+                active=market_data.get("active", True),
+                closed=market_data.get("closed", False),
             ))
 
-        return buckets
+        return weather_markets
 
     def _find_winning_bucket(self, event_data: dict) -> str | None:
         """Find which bucket won (for resolved events)."""
@@ -229,19 +229,19 @@ class BacktestEngine:
 
         return None
 
-    def _bucket_contains_temp(self, bucket: WeatherBucket, temp: float) -> bool:
-        """Check if temperature falls in bucket range."""
-        return bucket.contains_temp(temp)
+    def _market_contains_temp(self, market: WeatherMarket, temp: float) -> bool:
+        """Check if temperature falls in market range."""
+        return market.contains_temp(temp)
 
     def _calculate_model_prob(
         self,
         ensemble: EnsembleForecast,
-        bucket: WeatherBucket,
+        market: WeatherMarket,
     ) -> float:
-        """Calculate model probability for a bucket."""
+        """Calculate model probability for a market."""
         count = sum(
             1 for temp in ensemble.member_temps
-            if self._bucket_contains_temp(bucket, temp)
+            if self._market_contains_temp(market, temp)
         )
         return count / len(ensemble.member_temps)
 
@@ -288,27 +288,27 @@ class BacktestEngine:
             logger.debug("No market data", city=city, target_date=str(target_date))
             return results
 
-        # Parse buckets
-        buckets = self._parse_buckets(event_data)
-        if not buckets:
-            logger.debug("No buckets found", city=city, target_date=str(target_date))
+        # Parse markets
+        weather_markets = self._parse_markets(event_data)
+        if not weather_markets:
+            logger.debug("No markets found", city=city, target_date=str(target_date))
             return results
 
-        # Find winning bucket (actual outcome)
+        # Find winning market (actual outcome)
         winning_question = self._find_winning_bucket(event_data)
         is_resolved = event_data.get("closed", False)
 
-        # Infer actual temperature from winning bucket
+        # Infer actual temperature from winning market
         actual_temp = None
         if winning_question:
-            for b in buckets:
-                if b.question == winning_question:
-                    if b.low_temp is not None and b.high_temp is not None:
-                        actual_temp = (b.low_temp + b.high_temp) / 2
-                    elif b.high_temp is not None:
-                        actual_temp = b.high_temp - 1  # "X or below"
-                    elif b.low_temp is not None:
-                        actual_temp = b.low_temp + 1  # "X or above"
+            for m in weather_markets:
+                if m.question == winning_question:
+                    if m.low_temp is not None and m.high_temp is not None:
+                        actual_temp = (m.low_temp + m.high_temp) / 2
+                    elif m.high_temp is not None:
+                        actual_temp = m.high_temp - 1  # "X or below"
+                    elif m.low_temp is not None:
+                        actual_temp = m.low_temp + 1  # "X or above"
                     break
 
         # Get historical prices at forecast time (noon on forecast day)
@@ -318,19 +318,19 @@ class BacktestEngine:
         )
         forecast_timestamp = int(forecast_dt.timestamp())
 
-        historical_prices = await self._get_bucket_historical_prices(buckets, forecast_timestamp)
+        historical_prices = await self._get_market_historical_prices(weather_markets, forecast_timestamp)
 
         if not historical_prices:
             logger.debug("No historical prices", city=city, target_date=str(target_date))
             return results
 
-        # Evaluate each bucket
-        for bucket in buckets:
-            if bucket.low_temp is None and bucket.high_temp is None:
+        # Evaluate each market
+        for weather_market in weather_markets:
+            if weather_market.low_temp is None and weather_market.high_temp is None:
                 continue
 
             # Use historical price, not resolved price
-            market_price = historical_prices.get(bucket.yes_token_id)
+            market_price = historical_prices.get(weather_market.yes_token_id)
             if market_price is None:
                 continue
 
@@ -338,7 +338,7 @@ class BacktestEngine:
             if market_price <= 0 or market_price >= 1:
                 continue
 
-            model_prob = self._calculate_model_prob(ensemble, bucket)
+            model_prob = self._calculate_model_prob(ensemble, weather_market)
             edge = calculate_edge(model_prob, market_price)
 
             # Only trade with sufficient edge
@@ -361,7 +361,7 @@ class BacktestEngine:
             pnl = None
 
             if is_resolved and winning_question:
-                won = bucket.question == winning_question
+                won = weather_market.question == winning_question
                 if won:
                     # Win payout
                     pnl = position * (1 - market_price) / market_price
@@ -371,7 +371,7 @@ class BacktestEngine:
             results.append(TradeResult(
                 city=city,
                 target_date=target_date,
-                bucket_question=bucket.question,
+                bucket_question=weather_market.question,
                 forecast_temp=ensemble.mean,
                 actual_temp=actual_temp,
                 model_prob=model_prob,

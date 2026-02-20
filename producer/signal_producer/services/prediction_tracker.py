@@ -8,7 +8,7 @@ import structlog
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from ..strategies.weather.markets import WeatherBucket, WeatherEvent
+    from ..strategies.weather.markets import WeatherMarket, WeatherEvent
     from ..strategies.weather.open_meteo import EnsembleForecast
 
 
@@ -16,9 +16,9 @@ logger = structlog.get_logger()
 
 
 class PredictionTracker:
-    """Track bucket predictions and their outcomes for calibration analysis.
+    """Track market predictions and their outcomes for calibration analysis.
 
-    Records ALL bucket probabilities for each event, not just traded ones.
+    Records ALL market probabilities for each event, not just traded ones.
     This enables calibration analysis to detect model bias and improve forecasts.
     """
 
@@ -29,30 +29,30 @@ class PredictionTracker:
         session: "Session",
     ) -> int:
         """
-        Record predictions for ALL buckets in an event.
+        Record predictions for ALL markets in an event.
 
         Args:
             ensemble: The ensemble forecast used for prediction
-            event: Weather event with bucket markets
+            event: Weather event with temperature markets
             session: Database session
 
         Returns:
             Number of predictions recorded
         """
         from ..data.models import PredictionRecord
-        from ..strategies.weather.signals import calculate_bucket_probability
+        from ..strategies.weather.signals import calculate_market_probability
 
         recorded = 0
 
-        for bucket in event.buckets:
-            # Calculate model probability for this bucket
-            model_prob = calculate_bucket_probability(ensemble, bucket)
+        for weather_market in event.markets:
+            # Calculate model probability for this market
+            model_prob = calculate_market_probability(ensemble, weather_market)
 
             # Check if prediction already exists (avoid duplicates)
             existing = session.query(PredictionRecord).filter(
                 PredictionRecord.city == ensemble.city,
                 PredictionRecord.target_date == ensemble.target_date,
-                PredictionRecord.bucket_question == bucket.question,
+                PredictionRecord.bucket_question == weather_market.question,
                 PredictionRecord.forecast_date == date.today(),
             ).first()
 
@@ -63,13 +63,13 @@ class PredictionTracker:
                 forecast_date=date.today(),
                 target_date=ensemble.target_date,
                 city=ensemble.city,
-                bucket_question=bucket.question,
-                bucket_low=bucket.low_temp,
-                bucket_high=bucket.high_temp,
+                bucket_question=weather_market.question,
+                bucket_low=weather_market.low_temp,
+                bucket_high=weather_market.high_temp,
                 raw_ensemble_prob=model_prob,
                 ensemble_mean=ensemble.mean,
                 ensemble_spread=ensemble.max - ensemble.min,
-                market_price=bucket.yes_price,
+                market_price=weather_market.yes_price,
             )
 
             session.add(prediction)
