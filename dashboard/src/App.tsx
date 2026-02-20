@@ -1,5 +1,5 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Header } from "@/components/Header";
 import { PortfolioTab } from "@/components/PortfolioTab";
 import { PositionsTab } from "@/components/PositionsTab";
@@ -7,8 +7,22 @@ import { SignalsTab } from "@/components/SignalsTab";
 import { ActivityTab } from "@/components/ActivityTab";
 import { SettingsTab } from "@/components/SettingsTab";
 import { getConfig, getHealth } from "@/api/consumer";
+import { useSignalStream } from "@/hooks/useSignalStream";
+
+const TABS = [
+  { id: "portfolio", label: "Portfolio" },
+  { id: "positions", label: "Positions" },
+  { id: "signals", label: "Signals" },
+  { id: "activity", label: "Activity" },
+  { id: "settings", label: "Settings" },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
 
 function App() {
+  useSignalStream();
+  const [activeTab, setActiveTab] = useState<TabId>("portfolio");
+
   const { data: config } = useQuery({
     queryKey: ["config"],
     queryFn: getConfig,
@@ -29,55 +43,69 @@ function App() {
   return (
     <div className="min-h-screen bg-background">
       <Header walletAddress={wallet} consumerConnected={consumerConnected} />
-      <main className="mx-auto max-w-7xl px-6 py-6">
-        <Tabs defaultValue="portfolio">
-          <TabsList className="mb-6">
-            <TabsTrigger value="portfolio">Portfolio</TabsTrigger>
-            <TabsTrigger value="positions">Positions</TabsTrigger>
-            <TabsTrigger value="signals">Signals</TabsTrigger>
-            <TabsTrigger value="activity">Activity</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
-          </TabsList>
 
-          <TabsContent value="portfolio">
-            {wallet ? (
+      <main className="mx-auto max-w-7xl px-6 py-5">
+        {/* Tab bar */}
+        <nav className="flex items-center gap-1 mb-6 border-b border-[#1e2235] pb-px">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`
+                relative px-4 py-2 text-xs uppercase tracking-widest font-medium
+                transition-colors duration-200
+                ${
+                  activeTab === tab.id
+                    ? "text-signal-green"
+                    : "text-muted-foreground hover:text-foreground"
+                }
+              `}
+            >
+              {tab.label}
+              {activeTab === tab.id && (
+                <span className="absolute bottom-0 left-0 right-0 h-px bg-signal-green shadow-[0_0_8px_0_#4ade8060]" />
+              )}
+            </button>
+          ))}
+        </nav>
+
+        {/* Content */}
+        <div>
+          {activeTab === "portfolio" &&
+            (wallet ? (
               <PortfolioTab wallet={wallet} />
             ) : (
-              <p className="text-muted-foreground">
-                Waiting for consumer config (wallet address)...
-              </p>
-            )}
-          </TabsContent>
+              <WaitingState msg="Waiting for consumer config..." />
+            ))}
 
-          <TabsContent value="positions">
-            {wallet ? (
+          {activeTab === "positions" &&
+            (wallet ? (
               <PositionsTab wallet={wallet} />
             ) : (
-              <p className="text-muted-foreground">
-                Waiting for wallet address...
-              </p>
-            )}
-          </TabsContent>
+              <WaitingState msg="Waiting for wallet address..." />
+            ))}
 
-          <TabsContent value="signals">
-            <SignalsTab />
-          </TabsContent>
+          {activeTab === "signals" && <SignalsTab />}
 
-          <TabsContent value="activity">
-            {wallet ? (
+          {activeTab === "activity" &&
+            (wallet ? (
               <ActivityTab wallet={wallet} />
             ) : (
-              <p className="text-muted-foreground">
-                Waiting for wallet address...
-              </p>
-            )}
-          </TabsContent>
+              <WaitingState msg="Waiting for wallet address..." />
+            ))}
 
-          <TabsContent value="settings">
-            <SettingsTab />
-          </TabsContent>
-        </Tabs>
+          {activeTab === "settings" && <SettingsTab />}
+        </div>
       </main>
+    </div>
+  );
+}
+
+function WaitingState({ msg }: { msg: string }) {
+  return (
+    <div className="glow-card rounded-lg p-8 text-center">
+      <span className="live-dot mr-2 h-1.5 w-1.5 rounded-full bg-signal-amber inline-block" />
+      <span className="text-sm text-muted-foreground">{msg}</span>
     </div>
   );
 }
