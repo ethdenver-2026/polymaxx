@@ -214,8 +214,14 @@ def get_live_price(client: ClobClient, token_id: str, side: str) -> float | None
 
 
 def get_clob_balance(client: ClobClient) -> float:
-    """Fetch USDC.e balance from the Polymarket CLOB."""
-    sig_type = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2"))
+    """Fetch USDC.e balance from the Polymarket CLOB.
+
+    Uses the signature type from the client's configuration (set during
+    init_client) rather than reading the env var independently.
+    """
+    sig_type = getattr(client, "sig_type", None) or int(
+        os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2")
+    )
     result = client.get_balance_allowance(
         BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
     )
