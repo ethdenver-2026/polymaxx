@@ -85,8 +85,10 @@ def test_log_and_fetch_auction_events(tmp_path, monkeypatch):
     )
 
     events = db_module.get_auction_events(limit=10)
-    assert len(events) == 2
-    assert events[0]["outcome"] == "payment_succeeds"
-    assert events[0]["winning_paid_amount"] == 3.25
-    assert events[1]["outcome"] == "bid_submitted"
-    assert events[1]["auction_id"] == "auc-1"
+    # Both rows share auction_id="auc-1", so they merge into one entry
+    assert len(events) == 1
+    merged = events[0]
+    assert merged["auction_id"] == "auc-1"
+    assert merged["outcome"] == "payment_succeeds"  # latest outcome wins
+    assert merged["winning_paid_amount"] == 3.25
+    assert merged["bid_amount"] == 3.25  # merged from first event

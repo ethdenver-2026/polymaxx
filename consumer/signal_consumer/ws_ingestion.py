@@ -229,8 +229,14 @@ def _execute_payment_for_win_notice(
     settings: Settings,
 ) -> bool:
     if settings.consumer_payment_auto_succeeds:
-        logger.info("Auto-succeeding payment (consumer_payment_auto_succeeds=true)", auction_id=auction_id)
-        return True
+        if settings.trading_mode == "live":
+            logger.warning(
+                "consumer_payment_auto_succeeds is True in live mode — executing real payment instead",
+                auction_id=auction_id,
+            )
+        else:
+            logger.info("Auto-succeeding payment (paper mode)", auction_id=auction_id)
+            return True
     payment_url = str(bid_response.get("x402_payment_url", "")).strip()
     bid_amount = float(bid_response.get("bid_amount", 0.0))
     try:

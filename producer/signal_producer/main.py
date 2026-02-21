@@ -95,9 +95,7 @@ def main():
 
     if args.producer:
         from .tasks.orchestrator import ProducerOrchestrator
-        from .ws_server import app, set_broadcaster
-
-        import uvicorn
+        from .ws_server import app
 
         cities = None
         if args.cities:
@@ -113,19 +111,7 @@ def main():
 
         async def _run_producer_and_server() -> None:
             orchestrator = ProducerOrchestrator(db_path=args.db_path, cities=cities)
-            orchestrator._init_components()
-            set_broadcaster(orchestrator.broadcaster)
-
-            server = uvicorn.Server(
-                uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
-            )
-            server_task = asyncio.create_task(server.serve())
-            orchestrator._setup_signal_handlers()
-            try:
-                await orchestrator._run_tasks()
-            finally:
-                server.should_exit = True
-                await server_task
+            await orchestrator.run_with_server(app, host=args.host, port=args.port)
 
         asyncio.run(_run_producer_and_server())
         return

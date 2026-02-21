@@ -231,7 +231,12 @@ def test_submit_bid_preview_sends_payment_failure_when_x402_fails(monkeypatch):
     result = asyncio.run(
         _submit_bid_for_preview(
             preview_payload,
-            _settings(consumer_did="did:kite:test/consumer-a", consumer_wallet_address="0xabc"),
+            _settings(
+                consumer_did="did:kite:test/consumer-a",
+                consumer_wallet_address="0xabc",
+                trading_mode="live",
+                consumer_payment_auto_succeeds=False,
+            ),
         )
     )
     assert result["action"] == "AuctionNoWinner"

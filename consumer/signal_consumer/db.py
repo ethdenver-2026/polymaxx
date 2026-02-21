@@ -27,6 +27,9 @@ _SCHEMA_COLUMNS: dict[str, str] = {
     "strategy_checks": "TEXT",
     "auction_id": "TEXT",
 }
+_AUCTION_SCHEMA_COLUMNS: dict[str, str] = {
+    "smoke": "INTEGER DEFAULT 0",
+}
 
 
 def subscribe() -> queue.Queue[dict]:
@@ -56,8 +59,16 @@ def _notify(signal_row: dict) -> None:
                 pass
 
 
+_db_initialized_path: str | None = None
+
+
 def init_db() -> None:
     """Create consumer tables if they don't exist."""
+    global _db_initialized_path
+    current = str(DB_PATH)
+    if _db_initialized_path == current:
+        return
+
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("""
@@ -104,7 +115,7 @@ def init_db() -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_outcome ON consumer_auction_log (outcome)"
     )
-    # Idempotent migration: add columns that don't exist yet
+    # Idempotent migration: add columns that don't exist yet (signal log)
     existing_cols = {
         row[1]
         for row in conn.execute("PRAGMA table_info(consumer_signal_log)").fetchall()
@@ -114,8 +125,19 @@ def init_db() -> None:
             conn.execute(
                 f"ALTER TABLE consumer_signal_log ADD COLUMN {name} {sql_type}"
             )
+    # Idempotent migration: add columns that don't exist yet (auction log)
+    existing_auction_cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(consumer_auction_log)").fetchall()
+    }
+    for name, sql_type in _AUCTION_SCHEMA_COLUMNS.items():
+        if name not in existing_auction_cols:
+            conn.execute(
+                f"ALTER TABLE consumer_auction_log ADD COLUMN {name} {sql_type}"
+            )
     conn.commit()
     conn.close()
+    _db_initialized_path = current
 
 
 def log_auction_event(
@@ -138,6 +160,7 @@ def log_auction_event(
 ) -> None:
     """Persist a single auction lifecycle event."""
     now = time.time()
+    is_smoke = 1 if raw_message.get("smoke") else 0
     init_db()
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute(
@@ -147,9 +170,9 @@ def log_auction_event(
                 received_at, auction_id, consumer_did, producer_did, event_id,
                 bid_amount, auction_end_utc, outcome, rejection_reason, winner_did,
                 winning_paid_amount, payment_url, x402_network, x402_asset,
-                metadata_json, raw_message_json
+                metadata_json, raw_message_json, smoke
             )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now,
@@ -168,6 +191,7 @@ def log_auction_event(
             x402_asset,
             json.dumps(metadata) if metadata else None,
             json.dumps(raw_message),
+            is_smoke,
         ),
     )
     conn.commit()
@@ -184,18 +208,39 @@ def get_auction_events(limit: int = 100) -> list[dict]:
     init_db()
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
+
+    # First, get the most recent N auction_ids (excluding smoke rows).
+    # This bounds memory usage: we only load rows for these auctions.
+    recent_ids = conn.execute(
+        """
+        SELECT auction_id, MAX(received_at) AS latest
+        FROM consumer_auction_log
+        WHERE smoke = 0
+        GROUP BY auction_id
+        ORDER BY latest DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    if not recent_ids:
+        conn.close()
+        return []
+
+    aid_list = [r["auction_id"] for r in recent_ids]
+    placeholders = ",".join("?" for _ in aid_list)
     rows = conn.execute(
-        "SELECT * FROM consumer_auction_log ORDER BY received_at ASC",
+        f"""
+        SELECT * FROM consumer_auction_log
+        WHERE smoke = 0 AND auction_id IN ({placeholders})
+        ORDER BY received_at ASC
+        """,
+        aid_list,
     ).fetchall()
     conn.close()
 
     # Group events by auction_id, merging into a single row per auction.
     auctions: dict[str, dict] = {}
     for row in rows:
-        raw = json.loads(row["raw_message_json"])
-        if raw.get("smoke"):
-            continue  # always skip seeded data
-
         aid = row["auction_id"]
         if aid not in auctions:
             auctions[aid] = {
@@ -217,22 +262,23 @@ def get_auction_events(limit: int = 100) -> list[dict]:
         entry = auctions[aid]
         # Always update to the latest outcome
         entry["outcome"] = row["outcome"]
-        # Merge non-null fields from later events
-        if row["producer_did"]:
+        # Merge non-null fields from later events (use `is not None` to
+        # preserve legitimate zero/falsy values like bid_amount=0.0)
+        if row["producer_did"] is not None:
             entry["producer_did"] = row["producer_did"]
-        if row["event_id"]:
+        if row["event_id"] is not None:
             entry["event_id"] = row["event_id"]
-        if row["bid_amount"]:
+        if row["bid_amount"] is not None:
             entry["bid_amount"] = row["bid_amount"]
-        if row["auction_end_utc"]:
+        if row["auction_end_utc"] is not None:
             entry["auction_end_utc"] = row["auction_end_utc"]
-        if row["rejection_reason"]:
+        if row["rejection_reason"] is not None:
             entry["rejection_reason"] = row["rejection_reason"]
-        if row["winner_did"]:
+        if row["winner_did"] is not None:
             entry["winner_did"] = row["winner_did"]
-        if row["winning_paid_amount"]:
+        if row["winning_paid_amount"] is not None:
             entry["winning_paid_amount"] = row["winning_paid_amount"]
-        if row["payment_url"]:
+        if row["payment_url"] is not None:
             entry["payment_url"] = row["payment_url"]
 
     # Return most-recent-first, limited
