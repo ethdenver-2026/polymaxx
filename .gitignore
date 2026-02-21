@@ -77,5 +77,7 @@ dashboard/dist/
 # SQLite databases
 *.db
 
-# Local scratch space
+# Local scratch spaceh
 tmp/
+
+research_data/
