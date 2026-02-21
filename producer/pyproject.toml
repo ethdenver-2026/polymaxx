@@ -11,6 +11,7 @@ dependencies = [
     "httpx[http2]>=0.28.0",
     "fastapi==0.129.0",
     "uvicorn==0.41.0",
+    "websockets>=16.0",
 
     # Validation
     "pydantic>=2.10.0",
@@ -53,6 +54,7 @@ backtest = [
 
 [project.scripts]
 signal-producer = "signal_producer.cli:main"
+signal-auction-smoke = "signal_producer.auction_smoke:main"
 
 [build-system]
 requires = ["hatchling"]
