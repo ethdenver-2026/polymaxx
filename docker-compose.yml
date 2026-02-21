@@ -6,16 +6,20 @@ services:
     image: signal-market-producer:local
     container_name: signal-market-producer
     env_file:
-      - .env.example
+      - .env
     environment:
+      POLYMARKET_PRIVATE_KEY: ${PRODUCER_PRIVATE_KEY}
+      POLYMARKET_WALLET_ADDRESS: ${PRODUCER_WALLET_ADDRESS}
+      PRODUCER_DID: ${PRODUCER_DID}
       PRODUCER_PUBLIC_BASE_URL: http://producer:8000
+      DEBUG_ENDPOINTS_ENABLED: "true"
     command:
       [
         "uv",
         "run",
         "python",
         "-m",
-        "signal_producer",
+        "signal_producer.main",
         "--producer",
         "--host",
         "0.0.0.0",
@@ -24,6 +28,8 @@ services:
       ]
     ports:
       - "8000:8000"
+    volumes:
+      - producer_db_data:/app/producer/data
     restart: unless-stopped
 
   consumer-a:
@@ -33,10 +39,23 @@ services:
     image: signal-market-consumer:local
     container_name: signal-market-consumer-a
     env_file:
-      - consumer/.env.consumer-a.example
+      - .env
     environment:
+      CONSUMER_DID: ${CONSUMER_A_DID}
+      CONSUMER_WALLET_ADDRESS: ${CONSUMER_A_PAYMENT_WALLET_ADDRESS}
+      POLYMARKET_PRIVATE_KEY: ${CONSUMER_A_PRIVATE_KEY}
+      POLYMARKET_WALLET_ADDRESS: ${CONSUMER_A_TRADING_WALLET_ADDRESS}
+      TRADING_WALLET_ADDRESS: ${CONSUMER_A_TRADING_WALLET_ADDRESS}
+      TRADING_WALLET_PRIVATE_KEY: ${CONSUMER_A_TRADING_PRIVATE_KEY}
+      PAYMENT_WALLET_ADDRESS: ${CONSUMER_A_PAYMENT_WALLET_ADDRESS}
+      PAYMENT_WALLET_PRIVATE_KEY: ${CONSUMER_A_PAYMENT_PRIVATE_KEY}
       PRODUCER_WS_URL: ws://producer:8000/ws/signals
       PRODUCER_BID_WS_URL: ws://producer:8000/ws/bids
+      SIWX_CHALLENGE_URL: http://producer:8000/x402/v2/siwx/challenge
+      SIWX_AUTH_URL: http://producer:8000/x402/v2/siwx/auth
+      SIWX_APP_ID: signal-market-demo
+      BID_LLM_PROVIDER: anthropic
+      X402_MODE: x402_v2
     depends_on:
       - producer
     command:
@@ -54,6 +73,8 @@ services:
       ]
     ports:
       - "9866:9866"
+    volumes:
+      - consumer_a_db_data:/app/data
     restart: unless-stopped
 
   consumer-b:
@@ -63,10 +84,23 @@ services:
     image: signal-market-consumer:local
     container_name: signal-market-consumer-b
     env_file:
-      - consumer/.env.consumer-b.example
+      - .env
     environment:
+      CONSUMER_DID: ${CONSUMER_B_DID}
+      CONSUMER_WALLET_ADDRESS: ${CONSUMER_B_PAYMENT_WALLET_ADDRESS}
+      POLYMARKET_PRIVATE_KEY: ${CONSUMER_B_PRIVATE_KEY}
+      POLYMARKET_WALLET_ADDRESS: ${CONSUMER_B_TRADING_WALLET_ADDRESS}
+      TRADING_WALLET_ADDRESS: ${CONSUMER_B_TRADING_WALLET_ADDRESS}
+      TRADING_WALLET_PRIVATE_KEY: ${CONSUMER_B_TRADING_PRIVATE_KEY}
+      PAYMENT_WALLET_ADDRESS: ${CONSUMER_B_PAYMENT_WALLET_ADDRESS}
+      PAYMENT_WALLET_PRIVATE_KEY: ${CONSUMER_B_PAYMENT_PRIVATE_KEY}
       PRODUCER_WS_URL: ws://producer:8000/ws/signals
       PRODUCER_BID_WS_URL: ws://producer:8000/ws/bids
+      SIWX_CHALLENGE_URL: http://producer:8000/x402/v2/siwx/challenge
+      SIWX_AUTH_URL: http://producer:8000/x402/v2/siwx/auth
+      SIWX_APP_ID: signal-market-demo
+      BID_LLM_PROVIDER: anthropic
+      X402_MODE: x402_v2
     depends_on:
       - producer
     command:
@@ -84,4 +118,40 @@ services:
       ]
     ports:
       - "9867:9867"
+    volumes:
+      - consumer_b_db_data:/app/data
     restart: unless-stopped
+
+  dashboard-a:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    image: signal-market-dashboard:local
+    container_name: signal-market-dashboard-a
+    environment:
+      API_TARGET: http://consumer-a:9866
+    depends_on:
+      - consumer-a
+    command:
+      ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173", "--strictPort"]
+    ports:
+      - "5173:5173"
+    restart: unless-stopped
+
+  dashboard-b:
+    image: signal-market-dashboard:local
+    container_name: signal-market-dashboard-b
+    environment:
+      API_TARGET: http://consumer-b:9867
+    depends_on:
+      - consumer-b
+    command:
+      ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174", "--strictPort"]
+    ports:
+      - "5174:5174"
+    restart: unless-stopped
+
+volumes:
+  producer_db_data:
+  consumer_a_db_data:
+  consumer_b_db_data:
