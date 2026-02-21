@@ -25,6 +25,7 @@ _SCHEMA_COLUMNS: dict[str, str] = {
     "horizon_hours": "REAL",
     "metadata_json": "TEXT",
     "strategy_checks": "TEXT",
+    "auction_id": "TEXT",
 }
 
 
@@ -239,7 +240,7 @@ def get_auction_events(limit: int = 100) -> list[dict]:
     return result[:limit]
 
 
-def log_signal(signal_data: dict, response: dict) -> None:
+def log_signal(signal_data: dict, response: dict, *, auction_id: str | None = None) -> None:
     """Persist a signal and its processing result, then notify subscribers."""
     now = time.time()
     init_db()
@@ -249,8 +250,9 @@ def log_signal(signal_data: dict, response: dict) -> None:
         """
         INSERT INTO consumer_signal_log
             (received_at, signal_json, action, signal_price, live_price,
-             signal_edge, live_edge, order_id, errors, strategy_checks)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             signal_edge, live_edge, order_id, errors, strategy_checks,
+             auction_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now,
@@ -263,6 +265,7 @@ def log_signal(signal_data: dict, response: dict) -> None:
             response.get("order_id"),
             json.dumps(response.get("errors", [])),
             json.dumps(strategy_checks) if strategy_checks else None,
+            auction_id,
         ),
     )
     conn.commit()
@@ -280,12 +283,27 @@ def log_signal(signal_data: dict, response: dict) -> None:
 
 
 def get_signals(limit: int = 100) -> list[dict]:
-    """Retrieve recent signals from the log."""
+    """Retrieve recent signals with joined auction metadata."""
     init_db()
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT * FROM consumer_signal_log ORDER BY received_at DESC LIMIT ?",
+        """
+        SELECT s.*,
+               a.bid_amount  AS auction_bid_amount,
+               a.outcome     AS auction_outcome,
+               a.winning_paid_amount AS auction_paid_amount
+        FROM consumer_signal_log s
+        LEFT JOIN (
+            SELECT auction_id, bid_amount, outcome, winning_paid_amount,
+                   ROW_NUMBER() OVER (PARTITION BY auction_id ORDER BY received_at DESC) AS rn
+            FROM consumer_auction_log
+            WHERE outcome IN ('payment_succeeds', 'AuctionBidRejected',
+                              'AuctionLossNotice', 'AuctionNoWinner', 'bid_skipped')
+        ) a ON s.auction_id = a.auction_id AND a.rn = 1
+        ORDER BY s.received_at DESC
+        LIMIT ?
+        """,
         (limit,),
     ).fetchall()
     conn.close()
@@ -324,6 +342,10 @@ def get_signals(limit: int = 100) -> list[dict]:
             "city": metadata.get("city"),
             "event_id": exchange.get("event_id"),
             "edge": exchange.get("edge"),
+            "auction_id": row["auction_id"],
+            "bid_amount": row["auction_bid_amount"],
+            "auction_outcome": row["auction_outcome"],
+            "paid_amount": row["auction_paid_amount"],
         })
     return results
 

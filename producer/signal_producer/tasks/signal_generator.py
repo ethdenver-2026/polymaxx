@@ -21,7 +21,6 @@ from ..signals.types import (
     WeatherMetadata,
     PolymarketInfo,
 )
-from ..clients.llm_pricer import price_signal
 from ..config import CITIES
 
 if TYPE_CHECKING:
@@ -57,9 +56,6 @@ class SignalGeneratorTask:
         engine: "Engine | None" = None,
         edge_threshold: float = DEFAULT_EDGE_THRESHOLD,
         forecast_interval: int = DEFAULT_FORECAST_INTERVAL,
-        llm_pricing_mode: str = "mock",
-        zg_ws_uri: str = "ws://localhost:8089",
-        llm_temperature: float = 0.8,
         signal_preview_ttl_minutes: int = 30,
         producer_id: str = "",
     ):
@@ -71,10 +67,6 @@ class SignalGeneratorTask:
         self._forecast_interval = forecast_interval
         self._running = False
 
-        # Marketplace config
-        self._llm_pricing_mode = llm_pricing_mode
-        self._zg_ws_uri = zg_ws_uri
-        self._llm_temperature = llm_temperature
         self._preview_ttl_minutes = signal_preview_ttl_minutes
         self._producer_id = producer_id
 
@@ -329,27 +321,6 @@ class SignalGeneratorTask:
             for signal in signals:
                 # Persist full signal to database for audit
                 self._persist_signal(signal)
-
-                # Price the signal via LLM → structured AuctionBidMessage
-                preview = self._build_preview(signal)
-                bid = await price_signal(
-                    preview,
-                    auction_id=preview.auction_id,
-                    consumer_did=self._producer_id,
-                    wallet_address="",
-                    mode=self._llm_pricing_mode,
-                    ws_uri=self._zg_ws_uri,
-                    temperature=self._llm_temperature,
-                )
-
-                logger.info(
-                    "LLM signal pricing",
-                    auction_id=bid.auction_id,
-                    bid_amount=bid.bid_amount,
-                    producer_did=preview.producer_did,
-                    last_paid=self._last_price_paid_usd,
-                    edge=signal.exchanges[0].get("edge") if signal.exchanges else None,
-                )
 
                 # Broadcast preview and start auction via broadcaster
                 if self._broadcaster:

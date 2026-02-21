@@ -1,6 +1,6 @@
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useSignals } from "@/hooks/queries";
-import type { StrategyCheckData } from "@/api/types";
+import type { ConsumerSignal, StrategyCheckData } from "@/api/types";
 
 function formatTime(ts: number): string {
   const d = new Date(ts * 1000);
@@ -11,14 +11,10 @@ function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function pct(v: number | null): string {
-  if (v === null || v === undefined) return "---";
-  return `${(v * 100).toFixed(1)}%`;
-}
-
 function ActionPill({ action }: { action: string }) {
   const styles = {
     executed: "bg-signal-green/15 text-signal-green border-signal-green/30",
+    simulated: "bg-signal-green/15 text-signal-green border-signal-green/30",
     skipped: "bg-signal-amber/15 text-signal-amber border-signal-amber/30",
     error: "bg-signal-red/15 text-signal-red border-signal-red/30",
   }[action] ?? "bg-muted text-muted-foreground border-border";
@@ -26,6 +22,26 @@ function ActionPill({ action }: { action: string }) {
   return (
     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${styles}`}>
       {action}
+    </span>
+  );
+}
+
+function OutcomePill({ outcome }: { outcome: string }) {
+  const styles: Record<string, string> = {
+    bid_submitted: "bg-signal-cyan/15 text-signal-cyan border-signal-cyan/30",
+    bid_skipped: "bg-muted text-muted-foreground border-border",
+    won_offer: "bg-signal-green/15 text-signal-green border-signal-green/30",
+    payment_succeeds: "bg-signal-green/15 text-signal-green border-signal-green/30",
+    payment_failed: "bg-signal-red/15 text-signal-red border-signal-red/30",
+    AuctionLossNotice: "bg-signal-amber/15 text-signal-amber border-signal-amber/30",
+    AuctionBidRejected: "bg-signal-red/15 text-signal-red border-signal-red/30",
+    AuctionNoWinner: "bg-muted text-muted-foreground border-border",
+  };
+  const style = styles[outcome] ?? "bg-muted text-muted-foreground border-border";
+
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${style}`}>
+      {outcome.replace(/_/g, " ")}
     </span>
   );
 }
@@ -76,18 +92,79 @@ function StrategyChecks({ checks }: { checks: StrategyCheckData[] }) {
   );
 }
 
-function SkipReason({ errors }: { errors: string[] }) {
-  if (!errors || errors.length === 0) return null;
-  return (
-    <div className="text-[11px] text-signal-amber mt-1">
-      {errors[0]}
-    </div>
-  );
+/** Extract event-level title from a bucket description.
+ *  "Will the highest temperature in Atlanta be 62°F or higher on February 22?"
+ *  -> "Highest temp in Atlanta, Feb 22"
+ */
+function extractEventTitle(description: string, city: string | null): string {
+  const match = description.match(/highest temperature in (.+?) (?:be .+? )?on (.+?)\?/i);
+  if (match) return `Highest temp in ${match[1]}, ${match[2]}`;
+  if (city) return `Weather signal — ${city}`;
+  return description;
 }
+
+/** Extract just the bucket part from a full description.
+ *  "Will the highest temperature in Atlanta be 62°F or higher on February 22?"
+ *  -> "62°F or higher"
+ */
+function extractBucket(description: string): string {
+  const match = description.match(/be ((?:between )?\d+.*?)(?:\s+on\s)/i);
+  if (match) return match[1];
+  return description;
+}
+
+interface EventGroup {
+  key: string;
+  title: string;
+  bestSignal: ConsumerSignal;
+  bucketCount: number;
+  received_at: number;
+}
+
+function groupSignalsByEvent(signals: ConsumerSignal[]): EventGroup[] {
+  const groups = new Map<string, ConsumerSignal[]>();
+
+  for (const s of signals) {
+    const key = s.event_id || `_solo_${s.id}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(s);
+    } else {
+      groups.set(key, [s]);
+    }
+  }
+
+  const result: EventGroup[] = [];
+  for (const [key, groupSignals] of groups) {
+    const bestSignal = groupSignals.reduce((best, s) => {
+      const bestEdge = best.signal_edge ?? -Infinity;
+      const sEdge = s.signal_edge ?? -Infinity;
+      return sEdge > bestEdge ? s : best;
+    });
+
+    const title = key.startsWith("_solo_")
+      ? bestSignal.description
+      : extractEventTitle(bestSignal.description, bestSignal.city);
+
+    const received_at = Math.min(...groupSignals.map((s) => s.received_at));
+
+    result.push({ key, title, bestSignal, bucketCount: groupSignals.length, received_at });
+  }
+
+  result.sort((a, b) => b.received_at - a.received_at);
+  return result;
+}
+
+const COL_COUNT = 7;
 
 export function SignalsTab() {
   const { data: signals, isLoading } = useSignals();
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  const eventGroups = useMemo(() => {
+    if (!signals) return [];
+    return groupSignalsByEvent(signals);
+  }, [signals]);
 
   if (isLoading) {
     return (
@@ -119,7 +196,7 @@ export function SignalsTab() {
           Signal Feed
         </span>
         <span className="text-[10px] text-muted-foreground num">
-          {signals.length} signals
+          {eventGroups.length} events
         </span>
       </div>
 
@@ -130,26 +207,26 @@ export function SignalsTab() {
             <tr className="border-b border-[#1e2235]">
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold w-6"></th>
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Time</th>
-              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Signal</th>
-              <th className="text-right px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Model</th>
-              <th className="text-right px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Sig Price</th>
-              <th className="text-right px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Live Price</th>
-              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Sig Edge</th>
-              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Live Edge</th>
+              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Event</th>
+              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Edge</th>
+              <th className="text-right px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Bid</th>
+              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Outcome</th>
               <th className="text-right px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Action</th>
             </tr>
           </thead>
           <tbody>
-            {signals.map((s, i) => {
-              const isExpanded = expandedId === s.id;
+            {eventGroups.map((group, i) => {
+              const s = group.bestSignal;
               const hasChecks = s.strategy_checks && s.strategy_checks.length > 0;
+              const isExpanded = expandedKey === group.key;
+              const isSolo = group.key.startsWith("_solo_");
 
               return (
-                <Fragment key={s.id}>
+                <Fragment key={group.key}>
                   <tr
                     className={`signal-row border-b border-[#1e2235]/50 hover:bg-[#4ade8008] transition-colors ${hasChecks ? "cursor-pointer" : ""}`}
                     style={{ animationDelay: `${i * 30}ms` }}
-                    onClick={() => hasChecks && setExpandedId(isExpanded ? null : s.id)}
+                    onClick={() => hasChecks && setExpandedKey(isExpanded ? null : group.key)}
                   >
                     <td className="px-2 py-2.5 text-center text-muted-foreground/40">
                       {hasChecks && (
@@ -157,38 +234,36 @@ export function SignalsTab() {
                       )}
                     </td>
                     <td className="px-4 py-2.5 whitespace-nowrap text-muted-foreground">
-                      <div className="num">{formatTime(s.received_at)}</div>
-                      <div className="text-[10px] text-muted-foreground/50">{formatDate(s.received_at)}</div>
+                      <div className="num">{formatTime(group.received_at)}</div>
+                      <div className="text-[10px] text-muted-foreground/50">{formatDate(group.received_at)}</div>
                     </td>
                     <td className="px-4 py-2.5">
-                      <div title={s.description}>
-                        {s.description || s.token_id.slice(0, 20) + "..."}
-                      </div>
-                      {s.action === "skipped" && <SkipReason errors={s.errors} />}
-                    </td>
-                    <td className="px-4 py-2.5 text-right num text-signal-cyan">
-                      {pct(s.model_probability)}
-                    </td>
-                    <td className="px-4 py-2.5 text-right num">
-                      {s.signal_price !== null ? `${(s.signal_price * 100).toFixed(1)}¢` : "---"}
-                    </td>
-                    <td className="px-4 py-2.5 text-right num">
-                      {s.live_price !== null ? `${(s.live_price * 100).toFixed(1)}¢` : "---"}
+                      <div className="font-medium">{group.title}</div>
+                      {!isSolo && (
+                        <div className="text-[10px] text-muted-foreground/60 mt-0.5">
+                          Best: {extractBucket(s.description)} &middot; {group.bucketCount} buckets
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2.5">
                       <EdgeBar edge={s.signal_edge} />
                     </td>
+                    <td className="px-4 py-2.5 text-right num text-signal-cyan">
+                      {s.bid_amount != null ? `$${s.bid_amount.toFixed(2)}` : "---"}
+                    </td>
                     <td className="px-4 py-2.5">
-                      <EdgeBar edge={s.live_edge} />
+                      {s.auction_outcome ? <OutcomePill outcome={s.auction_outcome} /> : <span className="text-muted-foreground">---</span>}
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       <ActionPill action={s.action} />
                     </td>
                   </tr>
+
+                  {/* Strategy checks for best bucket */}
                   {isExpanded && hasChecks && (
                     <tr className="border-b border-[#1e2235]/50">
                       <td></td>
-                      <td colSpan={8} className="px-4 pb-3 bg-[#0d0f1a]">
+                      <td colSpan={COL_COUNT - 1} className="px-4 pb-3 bg-[#0d0f1a]">
                         <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 pt-2 pb-1">
                           Strategy Checks
                         </div>

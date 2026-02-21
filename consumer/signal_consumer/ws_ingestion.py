@@ -178,7 +178,7 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                 if not isinstance(signal_payload, dict):
                     raise RuntimeError("SignalMessage missing signal payload")
                 response = process_signal_payload(signal_payload, settings)
-                log_signal(signal_payload, response)
+                log_signal(signal_payload, response, auction_id=auction_id)
                 return response
 
 

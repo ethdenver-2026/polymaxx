@@ -88,6 +88,10 @@ export interface ConsumerSignal {
   city: string | null;
   event_id: string | null;
   edge: number | null;
+  auction_id: string | null;
+  bid_amount: number | null;
+  auction_outcome: string | null;
+  paid_amount: number | null;
 }
 
 export interface ConsumerConfig {

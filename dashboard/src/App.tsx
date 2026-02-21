@@ -4,7 +4,6 @@ import { Header } from "@/components/Header";
 import { PortfolioTab } from "@/components/PortfolioTab";
 import { PositionsTab } from "@/components/PositionsTab";
 import { SignalsTab } from "@/components/SignalsTab";
-import { AuctionsTab } from "@/components/AuctionsTab";
 import { ActivityTab } from "@/components/ActivityTab";
 import { SettingsTab } from "@/components/SettingsTab";
 import { getConfig, getHealth } from "@/api/consumer";
@@ -14,7 +13,6 @@ const TABS = [
   { id: "portfolio", label: "Portfolio" },
   { id: "positions", label: "Positions" },
   { id: "signals", label: "Signals" },
-  { id: "auctions", label: "Auctions" },
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings" },
 ] as const;
@@ -88,8 +86,6 @@ function App() {
             ))}
 
           {activeTab === "signals" && <SignalsTab />}
-
-          {activeTab === "auctions" && <AuctionsTab />}
 
           {activeTab === "activity" &&
             (wallet ? (
