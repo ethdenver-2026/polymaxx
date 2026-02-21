@@ -1,18 +1,20 @@
-"""LLM-based signal pricing module.
+"""LLM-based signal pricing via WebSocket connection to 0G pricer service.
 
 Two modes:
 - mock: Formula-based pricing for when 0G is unavailable.
-- 0g: Calls 0G Compute Network chatbot endpoint with a pricing prompt.
+- 0g: Connects to the 0G WS pricer (scripts/0g-ws-pricer.mjs) over WebSocket.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-import subprocess
+import uuid
 
-import httpx
 import structlog
+import websockets
+from websockets.asyncio.client import ClientConnection
 
 from ..signals.types.producer_signal_preview import ProducerSignalPreview
 
@@ -22,6 +24,9 @@ logger = structlog.get_logger()
 MIN_PRICE = 0.01
 MAX_PRICE = 5.00
 BASE_PRICE = 1.00
+
+# Default WebSocket URI for the 0G pricer sidecar
+DEFAULT_ZG_WS_URI = "ws://localhost:8089"
 
 
 def _mock_price(preview: ProducerSignalPreview) -> float:
@@ -54,95 +59,104 @@ def _build_pricing_prompt(preview: ProducerSignalPreview) -> str:
     )
 
 
-def _get_0g_service_info() -> dict:
-    """Get endpoint, model, and auth headers from the 0G broker via Node.js helper.
+class ZgWsPricer:
+    """Persistent WebSocket client to the 0G pricer sidecar."""
 
-    Returns: {"endpoint": "...", "model": "...", "headers": {...}}
-    """
-    result = subprocess.run(
-        ["node", "scripts/0g-auth-helper.mjs"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={**__import__("os").environ, "ZG_NETWORK": "mainnet"},
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"0g-auth-helper failed: {result.stderr}")
-    # SDK may print debug lines before the JSON — grab the last line starting with '{'
-    for line in reversed(result.stdout.strip().splitlines()):
-        if line.startswith("{"):
-            return json.loads(line)
-    raise RuntimeError(f"No JSON found in 0g-auth-helper output: {result.stdout[:200]}")
+    def __init__(self, ws_uri: str = DEFAULT_ZG_WS_URI) -> None:
+        self._ws_uri = ws_uri
+        self._ws: ClientConnection | None = None
+        self._model: str = ""
+        self._connected = False
+
+    async def connect(self) -> None:
+        """Connect to the 0G WS pricer and wait for the ready message."""
+        self._ws = await websockets.connect(self._ws_uri)
+        # Wait for ready handshake
+        raw = await asyncio.wait_for(self._ws.recv(), timeout=10)
+        msg = json.loads(raw)
+        if msg.get("type") == "ready":
+            self._model = msg.get("model", "")
+            self._connected = True
+            logger.info(
+                "Connected to 0G WS pricer",
+                uri=self._ws_uri,
+                model=self._model,
+            )
+        else:
+            raise RuntimeError(f"Unexpected handshake message: {msg}")
+
+    async def close(self) -> None:
+        if self._ws:
+            await self._ws.close()
+            self._connected = False
+
+    async def price(self, preview: ProducerSignalPreview, temperature: float) -> float:
+        """Send a pricing request over WebSocket and return the price."""
+        if not self._connected or not self._ws:
+            await self.connect()
+
+        request_id = str(uuid.uuid4())
+        prompt = _build_pricing_prompt(preview)
+
+        await self._ws.send(json.dumps({
+            "type": "price_request",
+            "request_id": request_id,
+            "prompt": prompt,
+            "temperature": temperature,
+        }))
+
+        # Wait for the matching response (120s for reasoning models)
+        raw = await asyncio.wait_for(self._ws.recv(), timeout=120)
+        resp = json.loads(raw)
+
+        if resp.get("error"):
+            raise RuntimeError(f"0G pricer error: {resp['error']}")
+
+        price = resp.get("price")
+        if price is None:
+            raise RuntimeError(f"No price in response: {resp.get('raw', '')[:200]}")
+
+        return round(max(MIN_PRICE, min(MAX_PRICE, float(price))), 4)
 
 
-async def _0g_price(preview: ProducerSignalPreview, endpoint: str, model: str, temperature: float) -> float:
-    """Call 0G Compute Network chatbot for pricing.
+# Module-level singleton — reused across pricing calls
+_pricer: ZgWsPricer | None = None
 
-    If endpoint/model are empty, auto-discovers them from the 0G helper script.
-    """
-    service = _get_0g_service_info()
-    auth_headers = service.get("headers", {})
-    # Use provided endpoint/model or fall back to discovered ones
-    actual_endpoint = endpoint or service.get("endpoint", "")
-    actual_model = model or service.get("model", "")
 
-    if not actual_endpoint:
-        raise RuntimeError("No 0G endpoint available")
-
-    prompt = _build_pricing_prompt(preview)
-
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{actual_endpoint}/chat/completions",
-            headers={"Content-Type": "application/json", **auth_headers},
-            json={
-                "model": actual_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": temperature,
-                "max_tokens": 4096,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-    message = data["choices"][0]["message"]
-    content = message.get("content") or ""
-    # Some models (e.g. GLM) put reasoning in a separate field
-    reasoning = message.get("reasoning_content") or ""
-    raw = content.strip() or reasoning.strip()
-
-    if not raw:
-        logger.warning("LLM returned empty response, falling back to mock")
-        return _mock_price(preview)
-
-    # Extract the first number-like token from the response
-    match = re.search(r"\d+\.?\d*", raw)
-    if not match:
-        logger.warning("LLM returned no numeric value, falling back to mock", raw=raw[:200])
-        return _mock_price(preview)
+async def _0g_price(preview: ProducerSignalPreview, ws_uri: str, temperature: float) -> float:
+    """Price a signal via the 0G WebSocket pricer."""
+    global _pricer
+    if _pricer is None:
+        _pricer = ZgWsPricer(ws_uri=ws_uri)
 
     try:
-        price = float(match.group())
-    except ValueError:
-        logger.warning("LLM returned non-numeric price, falling back to mock", raw=raw[:200])
-        return _mock_price(preview)
-
-    return round(max(MIN_PRICE, min(MAX_PRICE, price)), 4)
+        return await _pricer.price(preview, temperature)
+    except (websockets.ConnectionClosed, OSError):
+        # Connection dropped — reconnect once and retry
+        logger.warning("0G WS connection lost, reconnecting")
+        _pricer = ZgWsPricer(ws_uri=ws_uri)
+        return await _pricer.price(preview, temperature)
 
 
 async def price_signal(
     preview: ProducerSignalPreview,
     mode: str = "mock",
-    endpoint: str = "",
-    model: str = "",
+    ws_uri: str = DEFAULT_ZG_WS_URI,
     temperature: float = 0.8,
 ) -> float:
-    """Price a signal preview. Returns price in USDC."""
+    """Price a signal preview. Returns price in USDC.
+
+    Args:
+        preview: The signal preview to price.
+        mode: "mock" for formula-based, "0g" for 0G LLM via WebSocket.
+        ws_uri: WebSocket URI of the 0G pricer sidecar.
+        temperature: LLM temperature (0.7-0.9 for natural variation).
+    """
     if mode == "mock":
         return _mock_price(preview)
 
     try:
-        return await _0g_price(preview, endpoint=endpoint, model=model, temperature=temperature)
+        return await _0g_price(preview, ws_uri=ws_uri, temperature=temperature)
     except Exception as e:
-        logger.error("0G pricing failed, falling back to mock", error=str(e))
+        logger.error("0G WS pricing failed, falling back to mock", error=str(e))
         return _mock_price(preview)

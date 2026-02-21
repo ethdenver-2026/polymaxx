@@ -58,8 +58,7 @@ class SignalGeneratorTask:
         edge_threshold: float = DEFAULT_EDGE_THRESHOLD,
         forecast_interval: int = DEFAULT_FORECAST_INTERVAL,
         llm_pricing_mode: str = "mock",
-        zg_endpoint: str = "",
-        zg_model: str = "",
+        zg_ws_uri: str = "ws://localhost:8089",
         llm_temperature: float = 0.8,
         signal_preview_ttl_minutes: int = 30,
         producer_id: str = "",
@@ -74,8 +73,7 @@ class SignalGeneratorTask:
 
         # Marketplace config
         self._llm_pricing_mode = llm_pricing_mode
-        self._zg_endpoint = zg_endpoint
-        self._zg_model = zg_model
+        self._zg_ws_uri = zg_ws_uri
         self._llm_temperature = llm_temperature
         self._preview_ttl_minutes = signal_preview_ttl_minutes
         self._producer_id = producer_id
@@ -337,8 +335,7 @@ class SignalGeneratorTask:
                 suggested_price = await price_signal(
                     preview,
                     mode=self._llm_pricing_mode,
-                    endpoint=self._zg_endpoint,
-                    model=self._zg_model,
+                    ws_uri=self._zg_ws_uri,
                     temperature=self._llm_temperature,
                 )
 

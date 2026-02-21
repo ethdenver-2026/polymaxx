@@ -31,9 +31,8 @@ class Settings(BaseSettings):
 
     # LLM pricing (signal marketplace)
     llm_pricing_mode: str = Field(default="mock")  # "mock" or "0g"
-    zg_endpoint: str = Field(default="")  # 0G service endpoint URL
-    zg_model: str = Field(default="")  # model name from service discovery
-    llm_temperature: float = Field(default=0.8)  # for 0G pricing calls
+    zg_ws_uri: str = Field(default="ws://localhost:8089")  # 0G WS pricer sidecar
+    llm_temperature: float = Field(default=0.8)  # for 0G pricing calls (0.7-0.9)
     signal_preview_ttl_minutes: int = Field(default=30)  # how long previews stay valid
     zg_private_key: str = Field(default="")  # wallet key for 0G
 

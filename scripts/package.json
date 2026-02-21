@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "@0glabs/0g-serving-broker": "^0.7.1",
-    "ethers": "^6.13.1"
+    "ethers": "^6.13.1",
+    "ws": "^8.19.0"
   }
 }
