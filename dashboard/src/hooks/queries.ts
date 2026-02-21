@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getPositions, getPortfolioValue, getActivity } from "@/api/polymarket";
-import { getBalances, getSignalLog, getConfig, generateSignal, setTradingMode, getPaperPositions } from "@/api/consumer";
+import { getAuctions, runAuctionSmoke, getBalances, getSignalLog, getConfig, generateSignal, setTradingMode, getPaperPositions } from "@/api/consumer";
 
 export function useConfig() {
   return useQuery({
@@ -71,6 +71,24 @@ export function useSetTradingMode() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["config"] });
       qc.invalidateQueries({ queryKey: ["signals"] });
+    },
+  });
+}
+
+export function useAuctions() {
+  return useQuery({
+    queryKey: ["auctions"],
+    queryFn: getAuctions,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useAuctionSmoke() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => runAuctionSmoke(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["auctions"] });
     },
   });
 }
