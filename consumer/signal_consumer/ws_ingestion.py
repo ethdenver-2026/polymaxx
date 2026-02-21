@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import asdict
 from urllib.parse import urlencode
 
 import structlog
 import websockets
 
+from .balances import get_balances
+from .bid_pricing import BidDecision, build_bid_pricing_input, normalize_bid_decision
 from .config import Settings
 from .consumer_engine import process_signal_payload
 from .db import log_auction_event, log_signal
+from .kite_payment import process_auction_payment
+from .llm_clients import BidLlmRouter
 
 logger = structlog.get_logger()
 
@@ -48,6 +53,30 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
     exchanges = payload.get("exchanges")
     if isinstance(exchanges, list) and exchanges:
         event_id = exchanges[0].get("event_id")
+    decision = await determine_bid_for_preview(payload, settings)
+    if not decision.should_bid:
+        log_auction_event(
+            auction_id=auction_id,
+            consumer_did=settings.consumer_did,
+            producer_did=producer_did,
+            event_id=event_id,
+            bid_amount=0.0,
+            auction_end_utc=payload.get("auction_end_utc"),
+            outcome="bid_skipped",
+            metadata={
+                "rationale": decision.rationale,
+                "provider": settings.bid_llm_provider,
+            },
+            raw_message={
+                "type": "BidSkipped",
+                "auction_id": auction_id,
+                "reason": decision.rationale,
+            },
+        )
+        logger.info("Skipping auction bid", auction_id=auction_id, reason=decision.rationale)
+        return {"action": "bid_skipped", "errors": []}
+
+    bid_amount = decision.bid_amount
     bid_url = f"{settings.producer_bid_ws_url}?{urlencode({'consumer_did': settings.consumer_did})}"
     bid_message = {
         "type": "AuctionBidMessage",
@@ -55,28 +84,35 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
         "auction_id": auction_id,
         "consumer_did": settings.consumer_did,
         "wallet_address": settings.consumer_wallet_address,
-        "bid_amount": settings.consumer_default_bid_amount,
+        "bid_amount": bid_amount,
     }
     log_auction_event(
         auction_id=auction_id,
         consumer_did=settings.consumer_did,
         producer_did=producer_did,
         event_id=event_id,
-        bid_amount=settings.consumer_default_bid_amount,
+        bid_amount=bid_amount,
         auction_end_utc=payload.get("auction_end_utc"),
         outcome="bid_submitted",
+        metadata={
+            "rationale": decision.rationale,
+            "provider": settings.bid_llm_provider,
+        },
         raw_message=bid_message,
     )
     logger.info(
         "Submitting auction bid",
         auction_id=auction_id,
         consumer_did=settings.consumer_did,
-        bid_amount=settings.consumer_default_bid_amount,
+        bid_amount=bid_amount,
     )
     async with websockets.connect(bid_url) as bid_ws:
         await bid_ws.send(json.dumps(bid_message))
         while True:
-            raw = await asyncio.wait_for(bid_ws.recv(), timeout=settings.consumer_bid_timeout_seconds)
+            raw = await asyncio.wait_for(
+                bid_ws.recv(),
+                timeout=settings.consumer_bid_timeout_seconds,
+            )
             bid_response = json.loads(raw)
             response_type = bid_response.get("type")
 
@@ -86,7 +122,7 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     consumer_did=settings.consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
-                    bid_amount=settings.consumer_default_bid_amount,
+                    bid_amount=bid_amount,
                     outcome=response_type,
                     rejection_reason=bid_response.get("reason"),
                     winner_did=bid_response.get("winner_did"),
@@ -116,7 +152,11 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     "version": 1,
                     "auction_id": auction_id,
                     "consumer_did": settings.consumer_did,
-                    "payment_success": settings.consumer_payment_auto_succeeds,
+                    "payment_success": _execute_payment_for_win_notice(
+                        bid_response=bid_response,
+                        auction_id=auction_id,
+                        settings=settings,
+                    ),
                 }
                 await bid_ws.send(json.dumps(payment_result))
                 continue
@@ -127,7 +167,7 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     consumer_did=settings.consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
-                    bid_amount=settings.consumer_default_bid_amount,
+                    bid_amount=bid_amount,
                     outcome=str(bid_response.get("status", "PAYMENT_UNKNOWN")).lower(),
                     raw_message=bid_response,
                 )
@@ -140,6 +180,73 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                 response = process_signal_payload(signal_payload, settings)
                 log_signal(signal_payload, response)
                 return response
+
+
+async def determine_bid_for_preview(payload: dict, settings: Settings) -> BidDecision:
+    balances = get_balances(
+        private_key=settings.polymarket_private_key,
+        wallet_address=settings.consumer_wallet_address,
+    )
+    balance_usdc = balances.polymarket_usdc + balances.onchain_usdc
+    context = build_bid_pricing_input(
+        preview_payload=payload,
+        balance_usdc=balance_usdc,
+        reputation_score=None,
+    )
+    router = BidLlmRouter(
+        provider=settings.bid_llm_provider,
+        anthropic_api_key=settings.anthropic_api_key,
+        anthropic_model=settings.anthropic_bid_model,
+        anthropic_temperature=settings.bid_llm_temperature,
+        g0_api_key=settings.g0_api_key,
+        g0_base_url=settings.g0_base_url,
+        g0_model=settings.g0_bid_model,
+        request_timeout_seconds=settings.bid_llm_request_timeout_seconds,
+    )
+    decision = await router.decide_bid(context)
+    normalized = normalize_bid_decision(
+        decision=decision,
+        available_balance_usdc=balance_usdc,
+        max_bid_amount_usdc=settings.bid_llm_max_bid_amount_usdc,
+    )
+    logger.info(
+        "Bid decision generated",
+        auction_id=context.auction_id,
+        provider=settings.bid_llm_provider,
+        context=asdict(context),
+        decision=asdict(normalized),
+    )
+    return normalized
+
+
+def _execute_payment_for_win_notice(
+    *,
+    bid_response: dict,
+    auction_id: str,
+    settings: Settings,
+) -> bool:
+    payment_url = str(bid_response.get("x402_payment_url", "")).strip()
+    bid_amount = float(bid_response.get("bid_amount", 0.0))
+    try:
+        return process_auction_payment(
+            auction_id=auction_id,
+            consumer_did=settings.consumer_did,
+            x402_payment_url=payment_url,
+            bid_amount=bid_amount,
+            kite_session_url=settings.kite_session_url,
+            kite_api_key=settings.kite_api_key,
+            timeout_seconds=settings.kite_payment_timeout_seconds,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Auction payment execution failed",
+            auction_id=auction_id,
+            consumer_did=settings.consumer_did,
+            payment_url=payment_url,
+            bid_amount=bid_amount,
+            error=str(exc),
+        )
+        return False
 
 
 async def consume_producer_signals(settings: Settings) -> None:
