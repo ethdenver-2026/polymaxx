@@ -2,6 +2,15 @@
 
 Prediction market signal producer and consumer system. The producer generates trading signals from weather forecast data (NOAA/Open-Meteo ensembles) and broadcasts them over WebSocket. Consumers subscribe to signals, evaluate them, and execute trades on Polymarket.
 
+## Judges
+
+Kite AI: [x402 code](https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/payment.py#L50https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/payment.py#L50) for buying signals
+
+0g: [LLM](https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/llm_clients.py#L99) trading decisions
+
+Fuuuuterllama: [AI driven websocket substrate ingestion](https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/ws_ingestion.py#L1)
+## Prerequisites
+
 ## Prerequisites
 
 - Python 3.12+
