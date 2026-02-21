@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     trading_mode: Literal["paper", "live"] = Field(default="paper")
     edge_threshold_pct: float = Field(default=8.0, ge=0.0, le=100.0)
     paper_edge_threshold_pct: float = Field(default=2.0, ge=0.0, le=100.0)
+    trade_strategy_mode: Literal["regular", "coin_flip"] = Field(default="regular")
     kelly_fraction: float = Field(default=0.25, ge=0.0, le=1.0)
     max_slippage_abs: float = Field(default=0.05, ge=0.0, le=1.0)
     bankroll_usdc: float = Field(default=50.0, gt=0.0)

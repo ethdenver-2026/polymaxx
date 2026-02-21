@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -167,17 +168,64 @@ def evaluate_strategy(
     live_price: float,
     now: datetime | None = None,
 ) -> StrategyDecision:
-    """Apply strategy/risk checks and produce a deterministic trade decision."""
+    """Apply configured strategy mode and produce trade decision."""
     _ = now or datetime.now(UTC)
     reasons: list[str] = []
+    live_edge = record.model_probability - live_price
+    horizon_hours = _extract_horizon_hours(record)
+
+    if settings.trade_strategy_mode == "coin_flip":
+        if available_balance_usdc <= 0:
+            return StrategyDecision(
+                should_trade=False,
+                reasons=["insufficient_balance"],
+                live_price=live_price,
+                live_edge=live_edge,
+                available_balance_usdc=available_balance_usdc,
+                horizon_hours=horizon_hours,
+            )
+
+        should_trade = random.random() < 0.5
+        if not should_trade:
+            return StrategyDecision(
+                should_trade=False,
+                reasons=["coin_flip_tails_skip"],
+                live_price=live_price,
+                live_edge=live_edge,
+                available_balance_usdc=available_balance_usdc,
+                horizon_hours=horizon_hours,
+            )
+
+        position_size_usd = min(settings.max_position_usd, available_balance_usdc)
+        if position_size_usd < settings.min_position_usd:
+            return StrategyDecision(
+                should_trade=False,
+                reasons=["coin_flip_heads_but_position_below_minimum"],
+                live_price=live_price,
+                live_edge=live_edge,
+                available_balance_usdc=available_balance_usdc,
+                position_size_usd=position_size_usd,
+                horizon_hours=horizon_hours,
+            )
+
+        return StrategyDecision(
+            should_trade=True,
+            reasons=["coin_flip_heads_trade"],
+            live_price=live_price,
+            live_edge=live_edge,
+            available_balance_usdc=available_balance_usdc,
+            position_size_usd=position_size_usd,
+            horizon_hours=horizon_hours,
+        )
 
     if record.signal_type not in ("weather", "tsa"):
         return StrategyDecision(
             should_trade=False,
             reasons=["unsupported_strategy"],
             live_price=live_price,
-            live_edge=record.model_probability - live_price,
+            live_edge=live_edge,
             available_balance_usdc=available_balance_usdc,
+            horizon_hours=horizon_hours,
         )
 
     if record.decision != "trade":
@@ -185,11 +233,11 @@ def evaluate_strategy(
             should_trade=False,
             reasons=["producer_decision_not_trade"],
             live_price=live_price,
-            live_edge=record.model_probability - live_price,
+            live_edge=live_edge,
             available_balance_usdc=available_balance_usdc,
+            horizon_hours=horizon_hours,
         )
 
-    live_edge = record.model_probability - live_price
     effective_threshold = (
         settings.paper_edge_threshold_pct if settings.trading_mode == "paper"
         else settings.edge_threshold_pct
@@ -201,6 +249,7 @@ def evaluate_strategy(
             live_price=live_price,
             live_edge=live_edge,
             available_balance_usdc=available_balance_usdc,
+            horizon_hours=horizon_hours,
         )
 
     if available_balance_usdc <= 0:
@@ -210,9 +259,9 @@ def evaluate_strategy(
             live_price=live_price,
             live_edge=live_edge,
             available_balance_usdc=available_balance_usdc,
+            horizon_hours=horizon_hours,
         )
 
-    horizon_hours = _extract_horizon_hours(record)
     horizon_mult, horizon_reason = _horizon_multiplier(horizon_hours)
     if horizon_reason:
         reasons.append(horizon_reason)
@@ -228,8 +277,8 @@ def evaluate_strategy(
 
     edge_scaled_fraction = min(max(live_edge, 0.0), 0.20)
     desired_position = available_balance_usdc * edge_scaled_fraction * horizon_mult
-    capped_position = min(desired_position, settings.max_position_usd, available_balance_usdc)
-    if capped_position < settings.min_position_usd:
+    position_size_usd = min(desired_position, settings.max_position_usd, available_balance_usdc)
+    if position_size_usd < settings.min_position_usd:
         reasons.append("position_below_minimum")
         return StrategyDecision(
             should_trade=False,
@@ -237,7 +286,7 @@ def evaluate_strategy(
             live_price=live_price,
             live_edge=live_edge,
             available_balance_usdc=available_balance_usdc,
-            position_size_usd=capped_position,
+            position_size_usd=position_size_usd,
             horizon_hours=horizon_hours,
         )
 
@@ -247,6 +296,6 @@ def evaluate_strategy(
         live_price=live_price,
         live_edge=live_edge,
         available_balance_usdc=available_balance_usdc,
-        position_size_usd=capped_position,
+        position_size_usd=position_size_usd,
         horizon_hours=horizon_hours,
     )
