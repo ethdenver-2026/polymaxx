@@ -204,13 +204,51 @@ stop_stack() {
   echo "Stop complete."
 }
 
+reset_db() {
+  local active_ports=()
+  local port
+  for port in 8000 8766 8767 5173 5174; do
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      active_ports+=("$port")
+    fi
+  done
+
+  if (( ${#active_ports[@]} > 0 )); then
+    echo "ERROR: cannot reset while stack is running. Active ports: ${active_ports[*]}" >&2
+    echo "Run './signal.sh stop' first, then './signal.sh reset'." >&2
+    exit 1
+  fi
+
+  local db_files=(
+    "$ROOT_DIR/producer/data/producer.db"
+    "$ROOT_DIR/producer/data/producer.db-wal"
+    "$ROOT_DIR/producer/data/producer.db-shm"
+    "$ROOT_DIR/data/consumer_signals.db"
+    "$ROOT_DIR/data/consumer_signals.db-wal"
+    "$ROOT_DIR/data/consumer_signals.db-shm"
+  )
+
+  local f
+  for f in "${db_files[@]}"; do
+    if [[ -f "$f" ]]; then
+      rm -f "$f"
+      echo "removed $f"
+    else
+      echo "not found $f"
+    fi
+  done
+
+  echo "Reset complete."
+}
+
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <start|stop>
+Usage: $(basename "$0") <start|stop|reset>
 
 Commands:
   start   Start producer, consumer A/B, and dashboard A/B
   stop    Stop producer, consumer A/B, and dashboard A/B
+  reset   Wipe local SQLite DB files (requires stack stopped)
 EOF
 }
 
@@ -219,6 +257,7 @@ main() {
   case "$cmd" in
     start) start_stack ;;
     stop) stop_stack ;;
+    reset) reset_db ;;
     *) usage; exit 1 ;;
   esac
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from signal_consumer import db as db_module
 
@@ -92,3 +93,89 @@ def test_log_and_fetch_auction_events(tmp_path, monkeypatch):
     assert events[0]["outcome"] == "payment_succeeds"  # Latest outcome
     assert events[0]["winning_paid_amount"] == 3.25
     assert events[0]["auction_id"] == "auc-1"
+
+
+def test_get_signal_id_for_auction_scoped_by_consumer(tmp_path, monkeypatch):
+    db_path = tmp_path / "consumer_signals.db"
+    monkeypatch.setattr(db_module, "DB_PATH", db_path)
+    monkeypatch.setattr(db_module, "_DB_INITIALIZED", False)
+
+    aid = "auction-shared"
+    sid_a = "sig-consumer-a"
+    sid_b = "sig-consumer-b"
+    db_module.create_signal_lifecycle(
+        signal_id=sid_a,
+        auction_id=aid,
+        consumer_did="did:pkh:eip155:137:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        preview_payload={"type": "SignalPreviewMessage", "auction_id": aid},
+    )
+    db_module.create_signal_lifecycle(
+        signal_id=sid_b,
+        auction_id=aid,
+        consumer_did="did:pkh:eip155:137:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        preview_payload={"type": "SignalPreviewMessage", "auction_id": aid},
+    )
+
+    resolved_a = db_module.get_signal_id_for_auction_id(
+        aid,
+        consumer_did="did:pkh:eip155:137:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    resolved_b = db_module.get_signal_id_for_auction_id(
+        aid,
+        consumer_did="did:pkh:eip155:137:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
+
+    assert resolved_a == sid_a
+    assert resolved_b == sid_b
+
+
+def test_update_signal_lifecycle_scoped_by_consumer(tmp_path, monkeypatch):
+    db_path = tmp_path / "consumer_signals.db"
+    monkeypatch.setattr(db_module, "DB_PATH", db_path)
+    monkeypatch.setattr(db_module, "_DB_INITIALIZED", False)
+
+    aid = "auction-same"
+    did_a = "did:pkh:eip155:137:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    did_b = "did:pkh:eip155:137:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    db_module.create_signal_lifecycle(
+        signal_id="sig-a",
+        auction_id=aid,
+        consumer_did=did_a,
+        preview_payload={"type": "SignalPreviewMessage", "auction_id": aid},
+    )
+    db_module.create_signal_lifecycle(
+        signal_id="sig-b",
+        auction_id=aid,
+        consumer_did=did_b,
+        preview_payload={"type": "SignalPreviewMessage", "auction_id": aid},
+    )
+
+    db_module.update_signal_lifecycle(
+        auction_id=aid,
+        consumer_did=did_a,
+        state="bid_submitted",
+        action="pending",
+        bid_amount=1.23,
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    rows = conn.execute(
+        """
+        SELECT signal_id, consumer_did, state, bid_amount
+        FROM consumer_signal_log
+        WHERE auction_id = ?
+        ORDER BY signal_id ASC
+        """,
+        (aid,),
+    ).fetchall()
+    conn.close()
+
+    assert len(rows) == 2
+    row_a = [r for r in rows if r[0] == "sig-a"][0]
+    row_b = [r for r in rows if r[0] == "sig-b"][0]
+    assert row_a[1] == did_a
+    assert row_a[2] == "bid_submitted"
+    assert row_a[3] == 1.23
+    assert row_b[1] == did_b
+    assert row_b[2] == "preview_received"
+    assert row_b[3] is None
