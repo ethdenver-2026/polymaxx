@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # Forecast config
     max_forecast_days: int = Field(default=2)  # Only trade within 48hr window
 
+    # LLM pricing (signal marketplace)
+    llm_pricing_mode: str = Field(default="mock")  # "mock" or "0g"
+    zg_endpoint: str = Field(default="")  # 0G service endpoint URL
+    zg_model: str = Field(default="")  # model name from service discovery
+    llm_temperature: float = Field(default=0.8)  # for 0G pricing calls
+    signal_preview_ttl_minutes: int = Field(default=30)  # how long previews stay valid
+    zg_private_key: str = Field(default="")  # wallet key for 0G
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

@@ -1,18 +1,27 @@
 """Signal generator task.
 
 Generates ProducerSignals by combining ensemble forecasts with market prices.
+Broadcasts signal preview messages for the marketplace auction protocol.
 """
 
 import asyncio
 import json
-from datetime import datetime, UTC
+import uuid
+from datetime import datetime, timedelta, UTC
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy.orm import Session
 
 from ..models.models import SignalRecord
-from ..signals.types import ProducerSignal, WeatherMetadata, PolymarketInfo
+from ..signals.types import (
+    ProducerSignal,
+    ProducerSignalPreview,
+    PreviewPolymarketInfo,
+    WeatherMetadata,
+    PolymarketInfo,
+)
+from ..clients.llm_pricer import price_signal
 from ..config import CITIES
 
 if TYPE_CHECKING:
@@ -37,7 +46,7 @@ class SignalGeneratorTask:
     3. Calculates model_probability per market
     4. Gets cached prices from registry
     5. Generates YES/NO ProducerSignals where edge exists
-    6. Broadcasts signals via websocket
+    6. Broadcasts signal preview messages via websocket
     """
 
     def __init__(
@@ -48,6 +57,12 @@ class SignalGeneratorTask:
         engine: "Engine | None" = None,
         edge_threshold: float = DEFAULT_EDGE_THRESHOLD,
         forecast_interval: int = DEFAULT_FORECAST_INTERVAL,
+        llm_pricing_mode: str = "mock",
+        zg_endpoint: str = "",
+        zg_model: str = "",
+        llm_temperature: float = 0.8,
+        signal_preview_ttl_minutes: int = 30,
+        producer_id: str = "",
     ):
         self._registry = registry
         self._open_meteo = open_meteo_client
@@ -56,6 +71,25 @@ class SignalGeneratorTask:
         self._edge_threshold = edge_threshold
         self._forecast_interval = forecast_interval
         self._running = False
+
+        # Marketplace config
+        self._llm_pricing_mode = llm_pricing_mode
+        self._zg_endpoint = zg_endpoint
+        self._zg_model = zg_model
+        self._llm_temperature = llm_temperature
+        self._preview_ttl_minutes = signal_preview_ttl_minutes
+        self._producer_id = producer_id
+
+        # Track last price paid (updated externally when auction settles)
+        self._last_price_paid_usd: float = 0.0
+
+    @property
+    def last_price_paid_usd(self) -> float:
+        return self._last_price_paid_usd
+
+    @last_price_paid_usd.setter
+    def last_price_paid_usd(self, value: float) -> None:
+        self._last_price_paid_usd = value
 
     def _calculate_market_probability(
         self, member_highs: list[float], low_temp: float | None, high_temp: float | None
@@ -250,8 +284,42 @@ class SignalGeneratorTask:
         finally:
             session.close()
 
+    def _build_preview(self, signal: ProducerSignal) -> ProducerSignalPreview:
+        """Build a ProducerSignalPreview from a full ProducerSignal.
+
+        Strips market details (token_id, side, market_price, market_description,
+        resolution_source) — only includes event_id and edge.
+        """
+        preview_exchanges: list[PreviewPolymarketInfo] = []
+        for ex in signal.exchanges:
+            preview_exchanges.append(
+                PreviewPolymarketInfo(
+                    exchange=ex["exchange"],
+                    event_id=ex["event_id"],
+                    edge=ex["edge"],
+                    price_timestamp=ex["price_timestamp"],
+                )
+            )
+
+        auction_ends = datetime.now(UTC) + timedelta(minutes=self._preview_ttl_minutes)
+
+        return ProducerSignalPreview(
+            signal_type=signal.signal_type,
+            producer_did=self._producer_id,
+            auction_id=str(uuid.uuid4()),
+            auction_end_utc=auction_ends.isoformat(),
+            last_price_paid=self._last_price_paid_usd,
+            model_probability=signal.model_probability,
+            confidence=signal.confidence,
+            exchanges=preview_exchanges,
+        )
+
     async def _generate_once(self) -> list[ProducerSignal]:
-        """Run one signal generation cycle."""
+        """Run one signal generation cycle.
+
+        Generates full signals, persists them for audit, then broadcasts
+        stripped-down preview messages for the marketplace.
+        """
         all_signals = []
 
         events = self._registry.get_active_events()
@@ -261,10 +329,29 @@ class SignalGeneratorTask:
             all_signals.extend(signals)
 
             for signal in signals:
-                # Persist to database
+                # Persist full signal to database for audit
                 self._persist_signal(signal)
 
-                # Broadcast via websocket
+                # Price the signal via LLM (logged for analytics)
+                preview = self._build_preview(signal)
+                suggested_price = await price_signal(
+                    preview,
+                    mode=self._llm_pricing_mode,
+                    endpoint=self._zg_endpoint,
+                    model=self._zg_model,
+                    temperature=self._llm_temperature,
+                )
+
+                logger.info(
+                    "LLM signal pricing",
+                    auction_id=preview.auction_id,
+                    producer_did=preview.producer_did,
+                    suggested_price_usd=suggested_price,
+                    last_paid=self._last_price_paid_usd,
+                    edge=signal.exchanges[0].get("edge") if signal.exchanges else None,
+                )
+
+                # Broadcast preview and start auction via broadcaster
                 if self._broadcaster:
                     await self._broadcaster.broadcast_producer_signal(signal)
 

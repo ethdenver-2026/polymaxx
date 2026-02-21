@@ -10,20 +10,20 @@ from .producer_signal import (
 from .producer_signal_preview import (
     AuctionBidMessage,
     AuctionBidRejected,
-    ProducerSignalPreview,
     PreviewPolymarketInfo,
+    ProducerSignalPreview,
     SignalPreviewMessage,
 )
 
 __all__ = [
-    "SignalType",
-    "ForecastSource",
-    "WeatherMetadata",
-    "PolymarketInfo",
-    "ProducerSignal",
-    "PreviewPolymarketInfo",
-    "ProducerSignalPreview",
-    "SignalPreviewMessage",
     "AuctionBidMessage",
     "AuctionBidRejected",
+    "ForecastSource",
+    "PolymarketInfo",
+    "PreviewPolymarketInfo",
+    "ProducerSignal",
+    "ProducerSignalPreview",
+    "SignalPreviewMessage",
+    "SignalType",
+    "WeatherMetadata",
 ]
