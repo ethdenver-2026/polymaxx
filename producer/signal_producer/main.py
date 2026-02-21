@@ -9,7 +9,7 @@ from typing import Any
 import structlog
 
 from .config import DEFAULT_CITIES
-from .signals.types import ProducerSignal
+from signal_schema import ProducerSignal
 
 
 # Configure structured logging

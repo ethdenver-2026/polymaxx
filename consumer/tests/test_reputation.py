@@ -25,6 +25,7 @@ def test_validate_consumer_did_wallet_binding_rejects_mismatch():
 def test_consumer_negative_reputation_threshold(tmp_path, monkeypatch):
     db_path = tmp_path / "consumer_signals.db"
     monkeypatch.setattr(db_module, "DB_PATH", db_path)
+    monkeypatch.setattr(db_module, "_DB_INITIALIZED", False)
     did = "did:pkh:eip155:84532:0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
     for idx in range(5):
         db_module.record_consumer_payment_failure(

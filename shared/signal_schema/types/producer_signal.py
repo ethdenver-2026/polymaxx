@@ -33,12 +33,20 @@ class PolymarketInfo(TypedDict):
     """Polymarket-specific market information."""
 
     exchange: Literal["polymarket"]
-    event_id: str
-    token_id: str
-    side: Side
-    market_description: str
+
+    # Event level (from Gamma API /events)
+    event_id: str  # e.g., "216598"
+    event_title: str  # e.g., "Highest temperature in NYC on February 21?"
     resolution_source: str  # e.g., wunderground URL
-    market_price: float  # 0-1
+
+    # Market level (from Gamma API /events -> markets[])
+    market_question: str  # e.g., "Will the highest temperature be 39°F or below?"
+    market_group_item_title: str  # e.g., "39°F or below" (short label)
+
+    # Trading info
+    token_id: str  # CLOB token ID for the side we're trading
+    side: Side  # "yes" or "no"
+    market_price: float  # 0-1, price for our side
     edge: float  # model_prob - market_price (adjusted for side)
     price_timestamp: str  # ISO timestamp
 

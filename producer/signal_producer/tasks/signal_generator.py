@@ -14,7 +14,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from ..models.models import SignalRecord
-from ..signals.types import (
+from signal_schema import (
     ProducerSignal,
     ProducerSignalPreview,
     PreviewPolymarketInfo,

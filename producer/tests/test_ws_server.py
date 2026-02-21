@@ -7,7 +7,7 @@ from eth_account.messages import encode_defunct
 import time
 
 import signal_producer.ws_server as ws_server
-from signal_producer.signals.types import ProducerSignal, WeatherMetadata, PolymarketInfo
+from signal_schema import ProducerSignal, WeatherMetadata, PolymarketInfo
 
 
 def test_consumer_receives_canonical_producer_signal_payload(monkeypatch):

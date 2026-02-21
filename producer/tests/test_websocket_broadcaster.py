@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from signal_producer.publishing.websocket_signal_broadcaster import SignalBroadcaster
-from signal_producer.signals.types import PolymarketInfo, ProducerSignal, WeatherMetadata
+from signal_schema import PolymarketInfo, ProducerSignal, WeatherMetadata
 
 
 @pytest.fixture

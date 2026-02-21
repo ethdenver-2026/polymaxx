@@ -20,7 +20,7 @@ from signal_schema.addressing import normalize_evm_address
 
 from .main import run_once
 from .publishing.websocket_signal_broadcaster import broadcaster as _default_broadcaster
-from .signals.types import ProducerSignal
+from signal_schema import ProducerSignal
 
 if TYPE_CHECKING:
     from .publishing.websocket_signal_broadcaster import SignalBroadcaster
