@@ -6,7 +6,7 @@ import structlog
 
 from .balances import get_balances
 from .config import Settings
-from .db import get_executed_notional_usd
+from .db import get_auction_spend_usd, get_executed_notional_usd
 from .execute_order import ExecutionResult, execute_order
 from .polymarket import init_client, get_live_price as _get_live_price
 from .signal_pipeline import evaluate_strategy, parse_producer_signal_record
@@ -20,7 +20,8 @@ def get_available_balance_usdc(settings: Settings) -> float:
         balances = get_balances()
         return float(balances.polymarket_usdc)
     executed_notional = get_executed_notional_usd()
-    available = settings.bankroll_usdc - executed_notional
+    auction_spend = get_auction_spend_usd()
+    available = settings.bankroll_usdc - executed_notional - auction_spend
     return max(0.0, float(available))
 
 

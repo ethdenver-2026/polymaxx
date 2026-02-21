@@ -85,6 +85,13 @@ export interface ConsumerSignal {
   order_id: string | null;
   errors: string[];
   strategy_checks: StrategyCheckData[] | null;
+  city: string | null;
+  event_id: string | null;
+  edge: number | null;
+  auction_id: string | null;
+  bid_amount: number | null;
+  auction_outcome: string | null;
+  paid_amount: number | null;
 }
 
 export interface ConsumerConfig {

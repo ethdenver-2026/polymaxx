@@ -13,7 +13,7 @@ import websockets
 from .balances import get_balances
 from .bid_pricing import BidDecision, build_bid_pricing_input, normalize_bid_decision
 from .config import Settings
-from .consumer_engine import process_signal_payload
+from .consumer_engine import get_available_balance_usdc, process_signal_payload
 from .db import log_auction_event, log_signal
 from .kite_payment import process_auction_payment
 from .llm_clients import BidLlmRouter
@@ -178,16 +178,19 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                 if not isinstance(signal_payload, dict):
                     raise RuntimeError("SignalMessage missing signal payload")
                 response = process_signal_payload(signal_payload, settings)
-                log_signal(signal_payload, response)
+                log_signal(signal_payload, response, auction_id=auction_id)
                 return response
 
 
 async def determine_bid_for_preview(payload: dict, settings: Settings) -> BidDecision:
-    balances = get_balances(
-        private_key=settings.polymarket_private_key,
-        wallet_address=settings.consumer_wallet_address,
-    )
-    balance_usdc = balances.polymarket_usdc + balances.onchain_usdc
+    if settings.trading_mode == "paper":
+        balance_usdc = get_available_balance_usdc(settings)
+    else:
+        balances = get_balances(
+            private_key=settings.polymarket_private_key,
+            wallet_address=settings.consumer_wallet_address,
+        )
+        balance_usdc = balances.polymarket_usdc + balances.onchain_usdc
     context = build_bid_pricing_input(
         preview_payload=payload,
         balance_usdc=balance_usdc,
@@ -225,6 +228,9 @@ def _execute_payment_for_win_notice(
     auction_id: str,
     settings: Settings,
 ) -> bool:
+    if settings.consumer_payment_auto_succeeds:
+        logger.info("Auto-succeeding payment (consumer_payment_auto_succeeds=true)", auction_id=auction_id)
+        return True
     payment_url = str(bid_response.get("x402_payment_url", "")).strip()
     bid_amount = float(bid_response.get("bid_amount", 0.0))
     try:
@@ -265,6 +271,16 @@ async def consume_producer_signals(settings: Settings) -> None:
                     message_type = payload.get("type")
                     if message_type == "SignalPreviewMessage":
                         await _submit_bid_for_preview(payload, settings)
+                        continue
+                    if message_type == "AuctionResultBroadcast":
+                        log_auction_event(
+                            auction_id=payload.get("auction_id", "unknown"),
+                            consumer_did=settings.consumer_did,
+                            outcome="auction_result",
+                            winner_did=payload.get("winner_did"),
+                            winning_paid_amount=payload.get("paid_amount"),
+                            raw_message=payload,
+                        )
                         continue
                     if message_type == "SignalMessage":
                         signal_payload = payload.get("signal", {})

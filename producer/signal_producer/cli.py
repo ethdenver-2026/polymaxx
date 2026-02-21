@@ -320,11 +320,55 @@ def serve(
     host: str = typer.Option("0.0.0.0", "--host", help="Bind host for websocket server"),
     port: int = typer.Option(8000, "--port", help="Bind port for websocket server"),
 ):
-    """Run FastAPI websocket server for signals."""
+    """Run FastAPI websocket server for signals (no pipeline)."""
     from .ws_server import run_signal_server
 
     typer.echo(f"Starting websocket server on {host}:{port}")
     run_signal_server(host=host, port=port)
+
+
+@app.command()
+def producer(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
+    port: int = typer.Option(8000, "--port", help="Bind port"),
+    cities_opt: str = typer.Option(None, "--cities", "-c", help="Comma-separated cities"),
+    db_path: str = typer.Option("data/producer.db", "--db-path", help="SQLite DB path"),
+):
+    """Run full producer pipeline + WebSocket server."""
+    import os
+    import uvicorn
+    from .tasks.orchestrator import ProducerOrchestrator
+    from .ws_server import app as ws_app, set_broadcaster
+
+    os.makedirs("data", exist_ok=True)
+    cities = [c.strip() for c in cities_opt.split(",")] if cities_opt else None
+    settings = get_settings()
+
+    logger = structlog.get_logger()
+    logger.info(
+        "Starting producer",
+        trading_mode=settings.trading_mode,
+        edge_threshold=f"{settings.paper_edge_threshold_pct}%" if settings.trading_mode == "paper" else f"{settings.edge_threshold_pct}%",
+        cities=cities or "all",
+    )
+
+    async def _run() -> None:
+        orchestrator = ProducerOrchestrator(db_path=db_path, cities=cities)
+        orchestrator._init_components()
+        set_broadcaster(orchestrator.broadcaster)
+
+        server = uvicorn.Server(
+            uvicorn.Config(ws_app, host=host, port=port, log_level="info")
+        )
+        server_task = asyncio.create_task(server.serve())
+        orchestrator._setup_signal_handlers()
+        try:
+            await orchestrator._run_tasks()
+        finally:
+            server.should_exit = True
+            await server_task
+
+    asyncio.run(_run())
 
 
 def main():
