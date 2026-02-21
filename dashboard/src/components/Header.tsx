@@ -1,4 +1,4 @@
-import { Radio } from "lucide-react";
+
 
 interface HeaderProps {
   walletAddress: string;
@@ -15,7 +15,7 @@ export function Header({ walletAddress, consumerConnected }: HeaderProps) {
       <div className="mx-auto max-w-7xl flex items-center justify-between px-6 py-3">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <Radio className="h-5 w-5 text-signal-green" />
+            <img src="/polymaxxlogo.png" alt="Polymaxx" className="h-6 w-6" />
             {consumerConnected && (
               <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-signal-green live-dot" />
             )}
@@ -24,7 +24,7 @@ export function Header({ walletAddress, consumerConnected }: HeaderProps) {
             className="text-lg font-bold tracking-tight"
             style={{ fontFamily: "var(--font-display)" }}
           >
-            Polymaxx
+            POLYMAXX
           </h1>
           <span className="text-[10px] text-muted-foreground tracking-widest uppercase ml-1">
             v0.1
