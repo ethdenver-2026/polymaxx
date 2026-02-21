@@ -18,7 +18,7 @@ from py_clob_client.clob_types import (
 from py_clob_client.constants import POLYGON
 from py_clob_client.order_builder.constants import BUY
 
-from signal_schema import Signal
+from signal_schema import ProducerSignal
 
 from .config import Settings
 
@@ -103,7 +103,7 @@ def get_market_options(client: ClobClient, token_id: str) -> tuple[str, bool]:
 def execute_weather_signal_market_buy(
     *,
     settings: Settings,
-    signal: Signal,
+    signal: ProducerSignal,
     request_id: str,
 ) -> dict:
     """
