@@ -9,18 +9,18 @@ from signal_consumer import config as config_module
 from signal_consumer.config import Settings
 
 
-def test_weather_edge_threshold_accepts_bounds():
-    settings_min = Settings(weather_edge_threshold=0.0)
-    settings_max = Settings(weather_edge_threshold=1.0)
+def test_edge_threshold_pct_accepts_bounds():
+    settings_min = Settings(edge_threshold_pct=0.0)
+    settings_max = Settings(edge_threshold_pct=100.0)
 
-    assert settings_min.weather_edge_threshold == 0.0
-    assert settings_max.weather_edge_threshold == 1.0
+    assert settings_min.edge_threshold_pct == 0.0
+    assert settings_max.edge_threshold_pct == 100.0
 
 
-@pytest.mark.parametrize("value", [-0.0001, 1.0001])
-def test_weather_edge_threshold_rejects_out_of_bounds(value: float):
+@pytest.mark.parametrize("value", [-0.0001, 100.0001])
+def test_edge_threshold_pct_rejects_out_of_bounds(value: float):
     with pytest.raises(ValidationError):
-        Settings(weather_edge_threshold=value)
+        Settings(edge_threshold_pct=value)
 
 
 def test_get_settings_is_cached(monkeypatch):

@@ -15,7 +15,8 @@ class Settings(BaseSettings):
 
     # Trading controls
     trading_mode: Literal["paper", "live"] = Field(default="paper")
-    weather_edge_threshold: float = Field(default=0.02, ge=0.0, le=1.0)
+    edge_threshold_pct: float = Field(default=8.0, ge=0.0, le=100.0)
+    kelly_fraction: float = Field(default=0.25, ge=0.0, le=1.0)
     max_slippage_abs: float = Field(default=0.05, ge=0.0, le=1.0)
     bankroll_usdc: float = Field(default=50.0, gt=0.0)
     max_position_usd: float = Field(default=5.0, gt=0.0)
@@ -44,4 +45,23 @@ class Settings(BaseSettings):
 @functools.lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+# ---------------------------------------------------------------------------
+# Runtime trading-mode override (survives without restarting the process)
+# ---------------------------------------------------------------------------
+_trading_mode_override: str | None = None
+
+
+def set_trading_mode(mode: str) -> None:
+    global _trading_mode_override
+    if mode not in ("paper", "live"):
+        raise ValueError(f"Invalid trading mode: {mode}")
+    _trading_mode_override = mode
+
+
+def get_trading_mode() -> str:
+    if _trading_mode_override is not None:
+        return _trading_mode_override
+    return get_settings().trading_mode
 

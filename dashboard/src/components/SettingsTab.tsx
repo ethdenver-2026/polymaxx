@@ -22,12 +22,12 @@ export function SettingsTab() {
     );
   }
 
+  const isLive = config.trading_mode === "live";
   const rows = [
-    { label: "Bankroll", value: `$${config.bankroll_usdc.toFixed(2)}`, unit: "USDC" },
+    { label: isLive ? "Balance" : "Bankroll", value: `$${config.bankroll_usdc.toFixed(2)}`, unit: "USDC" },
     { label: "Max Position", value: `$${config.max_position_usd.toFixed(2)}`, unit: "per trade" },
     { label: "Kelly Fraction", value: config.kelly_fraction.toString(), unit: "\u00D7" },
     { label: "Edge Threshold", value: `${config.edge_threshold_pct}%`, unit: "min" },
-    { label: "Daily Loss Limit", value: `${config.daily_loss_limit_pct}%`, unit: "of bankroll" },
   ];
 
   return (

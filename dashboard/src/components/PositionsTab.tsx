@@ -72,8 +72,8 @@ export function PositionsTab({ wallet }: PositionsTabProps) {
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-right num">{(p.size ?? 0).toFixed(2)}</td>
-                  <td className="px-4 py-2.5 text-right num">{((p.avgPrice ?? 0) * 100).toFixed(1)}\u00A2</td>
-                  <td className="px-4 py-2.5 text-right num">{((p.curPrice ?? 0) * 100).toFixed(1)}\u00A2</td>
+                  <td className="px-4 py-2.5 text-right num">{((p.avgPrice ?? 0) * 100).toFixed(1)}¢</td>
+                  <td className="px-4 py-2.5 text-right num">{((p.curPrice ?? 0) * 100).toFixed(1)}¢</td>
                   <td className="px-4 py-2.5 text-right num">${(p.currentValue ?? 0).toFixed(2)}</td>
                   <td className={`px-4 py-2.5 text-right font-semibold ${pnlColor}`}>
                     <span className="num">{cashPnl >= 0 ? "+" : ""}${cashPnl.toFixed(2)}</span>
