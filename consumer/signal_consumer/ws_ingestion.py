@@ -6,6 +6,7 @@ import asyncio
 import json
 from dataclasses import asdict
 from urllib.parse import urlencode
+from uuid import uuid4
 
 import structlog
 import websockets
@@ -15,16 +16,47 @@ from .bid_pricing import BidDecision, build_bid_pricing_input, normalize_bid_dec
 from .config import Settings
 from .consumer_engine import process_signal_payload
 from .db import (
+    create_signal_lifecycle,
+    get_signal_id_for_auction_id,
     is_consumer_reputation_sufficient,
     log_auction_event,
     log_signal,
     record_consumer_payment_failure,
+    update_signal_lifecycle,
     validate_consumer_did_wallet_binding,
 )
 from .payment import AuctionPaymentRequest, KiteConfig, X402V2Config, process_auction_payment
 from .llm_clients import BidLlmRouter
 
 logger = structlog.get_logger()
+_AUCTION_SIGNAL_IDS: dict[tuple[str, str], str] = {}
+
+
+def _remember_signal_id(auction_id: str, consumer_did: str, signal_id: str) -> None:
+    _AUCTION_SIGNAL_IDS[(auction_id, consumer_did)] = signal_id
+
+
+def _resolve_signal_id(auction_id: str, consumer_did: str) -> str | None:
+    sid = _AUCTION_SIGNAL_IDS.get((auction_id, consumer_did))
+    if sid:
+        return sid
+    sid = get_signal_id_for_auction_id(auction_id, consumer_did=consumer_did)
+    if sid:
+        _AUCTION_SIGNAL_IDS[(auction_id, consumer_did)] = sid
+    return sid
+
+
+def _safe_update_lifecycle(auction_id: str, consumer_did: str, **kwargs) -> None:
+    try:
+        update_signal_lifecycle(auction_id=auction_id, consumer_did=consumer_did, **kwargs)
+    except Exception as exc:
+        logger.exception(
+            "Failed to update signal lifecycle row",
+            auction_id=auction_id,
+            consumer_did=consumer_did,
+            error=str(exc),
+            update_fields=list(kwargs.keys()),
+        )
 
 
 def handle_raw_ws_message(message: str, settings: Settings) -> dict:
@@ -60,6 +92,38 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
     if isinstance(exchanges, list) and exchanges:
         event_id = exchanges[0].get("event_id")
     consumer_did = _resolve_consumer_did(settings)
+
+    signal_id = _resolve_signal_id(auction_id, consumer_did)
+    if signal_id is None:
+        signal_id = f"sig-{uuid4().hex}"
+        _remember_signal_id(auction_id, consumer_did, signal_id)
+        try:
+            create_signal_lifecycle(
+                signal_id=signal_id,
+                auction_id=auction_id,
+                consumer_did=consumer_did,
+                producer_did=producer_did,
+                event_id=event_id,
+                preview_payload=payload,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to create lifecycle row for preview",
+                auction_id=auction_id,
+                signal_id=signal_id,
+                error=str(exc),
+            )
+    else:
+        _safe_update_lifecycle(
+            auction_id,
+            consumer_did,
+            state="preview_received",
+            action="pending",
+            signal_payload=payload,
+            producer_did=producer_did,
+            event_id=event_id,
+        )
+
     if settings.reputation_storage_backend == "0g_stub" and settings.reputation_0g_enabled:
         logger.warning(
             "0g reputation backend requested but not implemented; using local_db",
@@ -76,6 +140,15 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
             outcome="insufficient_reputation",
             metadata={"reason": "InsufficientReputation", "threshold": 5},
             raw_message={"type": "InsufficientReputation", "auction_id": auction_id},
+        )
+        _safe_update_lifecycle(
+            auction_id,
+            consumer_did,
+            state="insufficient_reputation",
+            action="skipped",
+            errors=["InsufficientReputation"],
+            decision_rationale="InsufficientReputation",
+            bid_amount=0.0,
         )
         return {"action": "InsufficientReputation", "errors": ["InsufficientReputation"]}
 
@@ -98,6 +171,15 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                 "auction_id": auction_id,
                 "reason": decision.rationale,
             },
+        )
+        _safe_update_lifecycle(
+            auction_id,
+            consumer_did,
+            state="bid_skipped",
+            action="skipped",
+            errors=[],
+            decision_rationale=decision.rationale,
+            bid_amount=0.0,
         )
         logger.info("Skipping auction bid", auction_id=auction_id, reason=decision.rationale)
         return {"action": "bid_skipped", "errors": []}
@@ -125,6 +207,14 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
             "provider": settings.bid_llm_provider,
         },
         raw_message=bid_message,
+    )
+    _safe_update_lifecycle(
+        auction_id,
+        consumer_did,
+        state="bid_submitted",
+        action="pending",
+        bid_amount=bid_amount,
+        decision_rationale=decision.rationale,
     )
     logger.info(
         "Submitting auction bid",
@@ -155,6 +245,24 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     winning_paid_amount=bid_response.get("paid_amount"),
                     raw_message=bid_response,
                 )
+                lifecycle_state = {
+                    "AuctionBidRejected": "auction_bid_rejected",
+                    "AuctionLossNotice": "auction_loss",
+                    "AuctionNoWinner": "auction_no_winner",
+                }.get(response_type, "auction_result")
+                lifecycle_errors = []
+                reason = bid_response.get("reason")
+                if reason:
+                    lifecycle_errors = [str(reason)]
+                _safe_update_lifecycle(
+                    auction_id,
+                    consumer_did,
+                    state=lifecycle_state,
+                    action="skipped",
+                    winner_did=bid_response.get("winner_did"),
+                    winning_paid_amount=bid_response.get("paid_amount"),
+                    errors=lifecycle_errors,
+                )
                 logger.info(
                     "Auction ended without win",
                     auction_id=auction_id,
@@ -173,6 +281,14 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     payment_url=bid_response.get("x402_payment_url"),
                     raw_message=bid_response,
                 )
+                _safe_update_lifecycle(
+                    auction_id,
+                    consumer_did,
+                    state="won_offer",
+                    action="pending",
+                    bid_amount=bid_response.get("bid_amount"),
+                    winner_did=consumer_did,
+                )
                 payment_result = {
                     "type": "AuctionPaymentResult",
                     "version": 1,
@@ -189,14 +305,22 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                 continue
 
             if response_type == "AuctionPaymentStatus":
+                normalized_status = str(bid_response.get("status", "PAYMENT_UNKNOWN")).lower()
                 log_auction_event(
                     auction_id=auction_id,
                     consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
                     bid_amount=bid_amount,
-                    outcome=str(bid_response.get("status", "PAYMENT_UNKNOWN")).lower(),
+                    outcome=normalized_status,
                     raw_message=bid_response,
+                )
+                _safe_update_lifecycle(
+                    auction_id,
+                    consumer_did,
+                    state=normalized_status,
+                    action="pending" if normalized_status == "payment_succeeds" else "error",
+                    errors=[] if normalized_status == "payment_succeeds" else [normalized_status],
                 )
                 continue
 
@@ -204,8 +328,36 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                 signal_payload = bid_response.get("signal")
                 if not isinstance(signal_payload, dict):
                     raise RuntimeError("SignalMessage missing signal payload")
+                _safe_update_lifecycle(
+                    auction_id,
+                    consumer_did,
+                    state="signal_received",
+                    action="pending",
+                    signal_payload=signal_payload,
+                )
                 response = process_signal_payload(signal_payload, settings)
-                log_signal(signal_payload, response, auction_id=auction_id)
+                try:
+                    log_signal(signal_payload, response)
+                except Exception as exc:
+                    logger.exception(
+                        "Failed to persist consumer signal log for SignalMessage",
+                        auction_id=auction_id,
+                        consumer_did=consumer_did,
+                        error=str(exc),
+                    )
+                _safe_update_lifecycle(
+                    auction_id,
+                    consumer_did,
+                    state=response.get("action", "processed"),
+                    action=response.get("action"),
+                    signal_payload=signal_payload,
+                    signal_price=response.get("signal_price"),
+                    live_price=response.get("live_price"),
+                    signal_edge=response.get("signal_edge"),
+                    live_edge=response.get("live_edge"),
+                    order_id=response.get("order_id"),
+                    errors=response.get("errors", []),
+                )
                 return response
 
 
@@ -372,13 +524,30 @@ async def consume_producer_signals(settings: Settings) -> None:
                         await _submit_bid_for_preview(payload, settings)
                         continue
                     if message_type == "AuctionResultBroadcast":
+                        auction_id = payload.get("auction_id", "unknown")
                         log_auction_event(
-                            auction_id=payload.get("auction_id", "unknown"),
+                            auction_id=auction_id,
                             consumer_did=settings.consumer_did,
                             outcome="auction_result",
                             winner_did=payload.get("winner_did"),
                             winning_paid_amount=payload.get("paid_amount"),
                             raw_message=payload,
+                        )
+                        winner_did = payload.get("winner_did")
+                        result_state = "auction_result"
+                        if winner_did:
+                            if winner_did == settings.consumer_did:
+                                result_state = "auction_winner_confirmed"
+                            else:
+                                result_state = "auction_loser_confirmed"
+                        else:
+                            result_state = "auction_no_winner_confirmed"
+                        _safe_update_lifecycle(
+                            auction_id,
+                            settings.consumer_did,
+                            state=result_state,
+                            winner_did=winner_did,
+                            winning_paid_amount=payload.get("paid_amount"),
                         )
                         continue
                     if message_type == "SignalMessage":
