@@ -22,6 +22,12 @@ variable "public_subnet_cidr" {
   default     = "10.42.1.0/24"
 }
 
+variable "public_subnet_cidr_b" {
+  description = "CIDR block for the second public subnet."
+  type        = string
+  default     = "10.42.2.0/24"
+}
+
 variable "instance_type" {
   description = "EC2 instance type for the host."
   type        = string
@@ -40,7 +46,7 @@ variable "ssh_ingress_cidrs" {
 }
 
 variable "app_ingress_cidrs" {
-  description = "CIDR ranges allowed to access producer and consumer dashboard ports."
+  description = "CIDR ranges allowed to access producer, consumer API, and dashboard ports."
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }

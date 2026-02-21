@@ -13,6 +13,8 @@ export default defineConfig({
     },
   },
   server: {
+    // Dashboard is served behind ALB with custom Host headers.
+    allowedHosts: true,
     proxy: {
       "/api": {
         target: apiTarget,

@@ -19,12 +19,22 @@ output "producer_endpoint" {
 }
 
 output "consumer_a_dashboard_url" {
-  description = "Consumer A dashboard API URL."
-  value       = "http://${aws_instance.docker_host.public_ip}:9866"
+  description = "Consumer A dashboard UI URL."
+  value       = "https://a.polymaxx.health"
 }
 
 output "consumer_b_dashboard_url" {
-  description = "Consumer B dashboard API URL."
+  description = "Consumer B dashboard UI URL."
+  value       = "https://b.polymaxx.health"
+}
+
+output "consumer_a_api_url" {
+  description = "Consumer A API base URL."
+  value       = "http://${aws_instance.docker_host.public_ip}:9866"
+}
+
+output "consumer_b_api_url" {
+  description = "Consumer B API base URL."
   value       = "http://${aws_instance.docker_host.public_ip}:9867"
 }
 
@@ -36,4 +46,29 @@ output "github_pat_secret_arn" {
 output "env_file_secret_arn" {
   description = "Secrets Manager ARN for .env content."
   value       = aws_secretsmanager_secret.env_file.arn
+}
+
+output "route53_zone_id" {
+  description = "Route53 hosted zone ID for polymaxx.health."
+  value       = aws_route53_zone.polymaxx_health.zone_id
+}
+
+output "route53_name_servers" {
+  description = "Authoritative name servers to set at your registrar."
+  value       = aws_route53_zone.polymaxx_health.name_servers
+}
+
+output "consumer_a_dns_name" {
+  description = "Consumer A DNS hostname."
+  value       = aws_route53_record.consumer_a.fqdn
+}
+
+output "consumer_b_dns_name" {
+  description = "Consumer B DNS hostname."
+  value       = aws_route53_record.consumer_b.fqdn
+}
+
+output "consumer_alb_dns_name" {
+  description = "ALB DNS name for consumer dashboards."
+  value       = aws_lb.consumer.dns_name
 }
