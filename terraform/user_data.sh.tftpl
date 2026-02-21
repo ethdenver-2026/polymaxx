@@ -1,0 +1,57 @@
+#!/bin/bash
+set -euxo pipefail
+
+# Stream all bootstrap logs to file and cloud-init output.
+exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+dnf update -y
+dnf install -y docker git awscli
+
+systemctl enable docker
+systemctl start docker
+
+usermod -aG docker ec2-user
+
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL "https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-x86_64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+docker --version
+docker compose version
+
+REGION="${aws_region}"
+PAT_SECRET_NAME="${github_pat_secret_name}"
+ENV_SECRET_NAME="${env_secret_name}"
+REPO_URL="${github_repo_url}"
+REPO_BRANCH="${github_repo_branch}"
+REPO_DIR="/home/ec2-user/signal-market"
+
+mkdir -p "$${REPO_DIR}"
+
+# Keep secrets out of xtrace output.
+set +x
+PAT="$(aws secretsmanager get-secret-value --region "$${REGION}" --secret-id "$${PAT_SECRET_NAME}" --query SecretString --output text)"
+aws secretsmanager get-secret-value --region "$${REGION}" --secret-id "$${ENV_SECRET_NAME}" --query SecretString --output text > "$${REPO_DIR}/.env"
+AUTH_REPO_URL="https://x-access-token:$${PAT}@$${REPO_URL#https://}"
+set -x
+
+chown -R ec2-user:ec2-user "$${REPO_DIR}"
+chmod 600 "$${REPO_DIR}/.env"
+
+if [ -d "$${REPO_DIR}/.git" ]; then
+  sudo -u ec2-user git -C "$${REPO_DIR}" remote set-url origin "$${AUTH_REPO_URL}"
+  sudo -u ec2-user git -C "$${REPO_DIR}" fetch origin
+  sudo -u ec2-user git -C "$${REPO_DIR}" checkout "$${REPO_BRANCH}"
+  sudo -u ec2-user git -C "$${REPO_DIR}" reset --hard "origin/$${REPO_BRANCH}"
+else
+  rm -rf "$${REPO_DIR}"
+  sudo -u ec2-user git clone --branch "$${REPO_BRANCH}" "$${AUTH_REPO_URL}" "$${REPO_DIR}"
+fi
+
+# Remove PAT-bearing URL from git config after sync.
+sudo -u ec2-user git -C "$${REPO_DIR}" remote set-url origin "$${REPO_URL}"
+
+cd "$${REPO_DIR}"
+docker compose down --remove-orphans || true
+docker compose up -d --build
