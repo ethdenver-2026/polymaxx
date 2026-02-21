@@ -1,0 +1,87 @@
+services:
+  producer:
+    build:
+      context: .
+      dockerfile: producer/Dockerfile
+    image: signal-market-producer:local
+    container_name: signal-market-producer
+    env_file:
+      - .env.example
+    environment:
+      PRODUCER_PUBLIC_BASE_URL: http://producer:8000
+    command:
+      [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "signal_producer",
+        "--producer",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  consumer-a:
+    build:
+      context: .
+      dockerfile: consumer/Dockerfile
+    image: signal-market-consumer:local
+    container_name: signal-market-consumer-a
+    env_file:
+      - consumer/.env.consumer-a.example
+    environment:
+      PRODUCER_WS_URL: ws://producer:8000/ws/signals
+      PRODUCER_BID_WS_URL: ws://producer:8000/ws/bids
+    depends_on:
+      - producer
+    command:
+      [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "signal_consumer.run",
+        "--host",
+        "0.0.0.0",
+        "--api-port",
+        "9866",
+        "--verbose",
+      ]
+    ports:
+      - "9866:9866"
+    restart: unless-stopped
+
+  consumer-b:
+    build:
+      context: .
+      dockerfile: consumer/Dockerfile
+    image: signal-market-consumer:local
+    container_name: signal-market-consumer-b
+    env_file:
+      - consumer/.env.consumer-b.example
+    environment:
+      PRODUCER_WS_URL: ws://producer:8000/ws/signals
+      PRODUCER_BID_WS_URL: ws://producer:8000/ws/bids
+    depends_on:
+      - producer
+    command:
+      [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "signal_consumer.run",
+        "--host",
+        "0.0.0.0",
+        "--api-port",
+        "9867",
+        "--verbose",
+      ]
+    ports:
+      - "9867:9867"
+    restart: unless-stopped
