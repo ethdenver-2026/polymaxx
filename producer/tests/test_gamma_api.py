@@ -287,21 +287,21 @@ class TestParseTempRange:
     """Test the parse_temp_range function."""
 
     def test_parse_temp_range_between(self):
-        from signal_producer.clients.markets import parse_temp_range
+        from signal_producer.clients.polymarket.markets import parse_temp_range
 
         low, high = parse_temp_range("between 34-35°F")
         assert low == 34
         assert high == 36  # Exclusive upper bound
 
     def test_parse_temp_range_or_below(self):
-        from signal_producer.clients.markets import parse_temp_range
+        from signal_producer.clients.polymarket.markets import parse_temp_range
 
         low, high = parse_temp_range("31°F or below")
         assert low is None
         assert high == 32
 
     def test_parse_temp_range_or_higher(self):
-        from signal_producer.clients.markets import parse_temp_range
+        from signal_producer.clients.polymarket.markets import parse_temp_range
 
         low, high = parse_temp_range("46°F or higher")
         assert low == 46
@@ -315,7 +315,7 @@ class TestGammaClient:
     @pytest.mark.asyncio
     async def test_fetch_weather_event_returns_buckets(self):
         """Verify client returns weather event with buckets."""
-        from signal_producer.clients.gamma import GammaClient
+        from signal_producer.clients.polymarket.gamma import GammaClient
 
         client = GammaClient()
         tomorrow = date.today() + timedelta(days=1)
@@ -331,7 +331,7 @@ class TestGammaClient:
     @pytest.mark.asyncio
     async def test_fetch_weather_event_returns_none_for_invalid_city(self):
         """Verify client returns None for cities without markets."""
-        from signal_producer.clients.gamma import GammaClient
+        from signal_producer.clients.polymarket.gamma import GammaClient
 
         client = GammaClient()
         tomorrow = date.today() + timedelta(days=1)
@@ -342,7 +342,7 @@ class TestGammaClient:
     @pytest.mark.asyncio
     async def test_discover_weather_events(self):
         """Verify discover returns list of events."""
-        from signal_producer.clients.gamma import GammaClient
+        from signal_producer.clients.polymarket.gamma import GammaClient
 
         client = GammaClient()
 

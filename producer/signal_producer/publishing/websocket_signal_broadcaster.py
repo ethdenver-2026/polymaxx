@@ -14,7 +14,7 @@ from fastapi import WebSocket
 
 from ..models.models import SignalRecord
 from ..reputation import ReputationStore
-from ..signals.types import (
+from signal_schema import (
     AuctionBidRejected,
     ProducerSignal,
     SignalPreviewMessage,

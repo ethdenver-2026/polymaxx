@@ -50,6 +50,7 @@ def test_log_signal_persists_strategy_checks(tmp_path, monkeypatch):
 def test_log_signal_notifies_sse_subscribers(tmp_path, monkeypatch):
     db_path = tmp_path / "consumer_signals.db"
     monkeypatch.setattr(db_module, "DB_PATH", db_path)
+    monkeypatch.setattr(db_module, "_DB_INITIALIZED", False)
     q = db_module.subscribe()
     try:
         db_module.log_signal({"token_id": "tok-2"}, {"action": "skipped", "status": "paper"})
@@ -64,6 +65,7 @@ def test_log_signal_notifies_sse_subscribers(tmp_path, monkeypatch):
 def test_log_and_fetch_auction_events(tmp_path, monkeypatch):
     db_path = tmp_path / "consumer_signals.db"
     monkeypatch.setattr(db_module, "DB_PATH", db_path)
+    monkeypatch.setattr(db_module, "_DB_INITIALIZED", False)
 
     db_module.log_auction_event(
         auction_id="auc-1",
@@ -85,8 +87,8 @@ def test_log_and_fetch_auction_events(tmp_path, monkeypatch):
     )
 
     events = db_module.get_auction_events(limit=10)
-    assert len(events) == 2
-    assert events[0]["outcome"] == "payment_succeeds"
+    # get_auction_events collapses multiple events for the same auction_id into one row
+    assert len(events) == 1
+    assert events[0]["outcome"] == "payment_succeeds"  # Latest outcome
     assert events[0]["winning_paid_amount"] == 3.25
-    assert events[1]["outcome"] == "bid_submitted"
-    assert events[1]["auction_id"] == "auc-1"
+    assert events[0]["auction_id"] == "auc-1"

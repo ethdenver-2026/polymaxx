@@ -55,7 +55,6 @@ backtest = [
 
 [project.scripts]
 signal-producer = "signal_producer.cli:main"
-signal-auction-smoke = "signal_producer.auction_smoke:main"
 
 [build-system]
 requires = ["hatchling"]

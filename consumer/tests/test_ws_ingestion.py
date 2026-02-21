@@ -248,6 +248,7 @@ def test_submit_bid_preview_sends_payment_failure_when_x402_fails(monkeypatch):
         lambda _did, threshold=5: True,
     )
     monkeypatch.setattr("signal_consumer.ws_ingestion.log_auction_event", lambda **_: None)
+    monkeypatch.setattr("signal_consumer.ws_ingestion.record_consumer_payment_failure", lambda **_: None)
     async def _fake_bid(*_args, **_kwargs):
         return BidDecision(should_bid=True, bid_amount=2.0, rationale="ok")
 
@@ -262,6 +263,7 @@ def test_submit_bid_preview_sends_payment_failure_when_x402_fails(monkeypatch):
             _settings(
                 consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
                 consumer_wallet_address="0x0000000000000000000000000000000000000001",
+                consumer_payment_auto_succeeds=False,
             ),
         )
     )

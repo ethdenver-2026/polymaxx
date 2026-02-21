@@ -8,15 +8,16 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from ..config import DEFAULT_CITIES
+
 if TYPE_CHECKING:
-    from ..clients.gamma import GammaClient
-    from ..registry.market_registry import MarketRegistry
-    from ..tracker.price_tracker import PriceTracker
+    from ..clients.polymarket.gamma import GammaClient
+    from ..data.polymarket_registry import MarketRegistry
+    from ..data.polymarket_price_tracker import PriceTracker
 
 logger = structlog.get_logger()
 
 DEFAULT_POLL_INTERVAL = 10  # seconds
-DEFAULT_CITIES = ["nyc", "chicago", "miami"]
 DEFAULT_DAYS_AHEAD = 4
 
 

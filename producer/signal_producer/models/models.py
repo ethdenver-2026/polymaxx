@@ -72,7 +72,8 @@ class TrackedMarket(Base):
 
     id = Column(Integer, primary_key=True)
     event_id = Column(Integer, ForeignKey('tracked_events.id'), nullable=False, index=True)
-    question = Column(Text, nullable=False)
+    question = Column(Text, nullable=False)  # e.g., "Will the highest temperature be 39°F or below?"
+    group_item_title = Column(String(100))  # e.g., "39°F or below" (short label)
     low_temp = Column(Float)  # None for "X or below"
     high_temp = Column(Float)  # None for "X or above"
     yes_token_id = Column(String(100), nullable=False, index=True)

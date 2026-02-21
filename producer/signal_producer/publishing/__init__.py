@@ -1,5 +1,5 @@
 """Publishers for outbound signal delivery."""
 
-from .websocket import broadcaster
+from .websocket_signal_broadcaster import broadcaster, SignalBroadcaster
 
-__all__ = ["broadcaster"]
+__all__ = ["broadcaster", "SignalBroadcaster"]

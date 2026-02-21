@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime
 
-from signal_producer.signals.types import (
+from signal_schema import (
     WeatherMetadata,
     PolymarketInfo,
     ProducerSignal,
