@@ -291,6 +291,8 @@ class SignalGeneratorTask:
                 PreviewPolymarketInfo(
                     exchange=ex["exchange"],
                     event_id=ex["event_id"],
+                    event_title=ex.get("event_title", ""),
+                    market_group_item_title=ex.get("market_group_item_title", ""),
                     edge=ex["edge"],
                     price_timestamp=ex["price_timestamp"],
                 )

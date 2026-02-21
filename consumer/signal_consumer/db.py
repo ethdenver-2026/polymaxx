@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import sqlite3
 import threading
 import time
 from pathlib import Path
 from threading import Lock
+
+# Regexes for deriving event title / bucket from legacy market_description
+# e.g. "Will the highest temperature in New York City be between 52-53°F on February 21?"
+_RE_EVENT_TITLE = re.compile(
+    r"highest temperature in (.+?) (?:be .+? )?on (.+?)\?", re.IGNORECASE
+)
+_RE_BUCKET = re.compile(
+    r"be ((?:between )?\d+.+?)(?:\s+on\s)", re.IGNORECASE
+)
 
 from signal_schema.addressing import normalize_evm_address
 
@@ -29,6 +39,10 @@ _SCHEMA_COLUMNS: dict[str, str] = {
     "metadata_json": "TEXT",
     "strategy_checks": "TEXT",
     "auction_id": "TEXT",
+}
+_AUCTION_SCHEMA_COLUMNS: dict[str, str] = {
+    "event_title": "TEXT",
+    "market_group_item_title": "TEXT",
 }
 _DB_INITIALIZED = False
 _DB_INIT_LOCK = Lock()
@@ -87,23 +101,25 @@ def init_db() -> None:
         """)
         conn.execute("""
         CREATE TABLE IF NOT EXISTS consumer_auction_log (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            received_at         REAL    NOT NULL,
-            auction_id          TEXT    NOT NULL,
-            consumer_did        TEXT    NOT NULL,
-            producer_did        TEXT,
-            event_id            TEXT,
-            bid_amount          REAL,
-            auction_end_utc     TEXT,
-            outcome             TEXT    NOT NULL,
-            rejection_reason    TEXT,
-            winner_did          TEXT,
-            winning_paid_amount REAL,
-            payment_url         TEXT,
-            x402_network        TEXT,
-            x402_asset          TEXT,
-            metadata_json       TEXT,
-            raw_message_json    TEXT    NOT NULL
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            received_at             REAL    NOT NULL,
+            auction_id              TEXT    NOT NULL,
+            consumer_did            TEXT    NOT NULL,
+            producer_did            TEXT,
+            event_id                TEXT,
+            event_title             TEXT,
+            market_group_item_title TEXT,
+            bid_amount              REAL,
+            auction_end_utc         TEXT,
+            outcome                 TEXT    NOT NULL,
+            rejection_reason        TEXT,
+            winner_did              TEXT,
+            winning_paid_amount     REAL,
+            payment_url             TEXT,
+            x402_network            TEXT,
+            x402_asset              TEXT,
+            metadata_json           TEXT,
+            raw_message_json        TEXT    NOT NULL
         )
         """)
         conn.execute("""
@@ -132,7 +148,7 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_consumer_rep_events_consumer_did "
             "ON consumer_reputation_events (consumer_did)"
         )
-        # Idempotent migration: add columns that don't exist yet
+        # Idempotent migration: add columns that don't exist yet (signal log)
         existing_cols = {
             row[1]
             for row in conn.execute("PRAGMA table_info(consumer_signal_log)").fetchall()
@@ -141,6 +157,16 @@ def init_db() -> None:
             if name not in existing_cols:
                 conn.execute(
                     f"ALTER TABLE consumer_signal_log ADD COLUMN {name} {sql_type}"
+                )
+        # Idempotent migration: add columns that don't exist yet (auction log)
+        existing_auction_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(consumer_auction_log)").fetchall()
+        }
+        for name, sql_type in _AUCTION_SCHEMA_COLUMNS.items():
+            if name not in existing_auction_cols:
+                conn.execute(
+                    f"ALTER TABLE consumer_auction_log ADD COLUMN {name} {sql_type}"
                 )
         conn.commit()
         conn.close()
@@ -222,6 +248,8 @@ def log_auction_event(
     raw_message: dict,
     producer_did: str | None = None,
     event_id: str | None = None,
+    event_title: str | None = None,
+    market_group_item_title: str | None = None,
     bid_amount: float | None = None,
     auction_end_utc: str | None = None,
     rejection_reason: str | None = None,
@@ -241,11 +269,12 @@ def log_auction_event(
         INSERT INTO consumer_auction_log
             (
                 received_at, auction_id, consumer_did, producer_did, event_id,
+                event_title, market_group_item_title,
                 bid_amount, auction_end_utc, outcome, rejection_reason, winner_did,
                 winning_paid_amount, payment_url, x402_network, x402_asset,
                 metadata_json, raw_message_json
             )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now,
@@ -253,6 +282,8 @@ def log_auction_event(
             consumer_did,
             producer_did,
             event_id,
+            event_title,
+            market_group_item_title,
             bid_amount,
             auction_end_utc,
             outcome,
@@ -301,6 +332,8 @@ def get_auction_events(limit: int = 100) -> list[dict]:
                 "consumer_did": row["consumer_did"],
                 "producer_did": None,
                 "event_id": None,
+                "event_title": None,
+                "market_group_item_title": None,
                 "bid_amount": None,
                 "auction_end_utc": None,
                 "outcome": row["outcome"],
@@ -318,6 +351,10 @@ def get_auction_events(limit: int = 100) -> list[dict]:
             entry["producer_did"] = row["producer_did"]
         if row["event_id"]:
             entry["event_id"] = row["event_id"]
+        if row["event_title"]:
+            entry["event_title"] = row["event_title"]
+        if row["market_group_item_title"]:
+            entry["market_group_item_title"] = row["market_group_item_title"]
         if row["bid_amount"]:
             entry["bid_amount"] = row["bid_amount"]
         if row["auction_end_utc"]:
@@ -416,14 +453,33 @@ def get_signals(limit: int = 100) -> list[dict]:
         # Build description from market_question/event_title or legacy description field
         description = (
             exchange.get("market_question")
+            or exchange.get("market_description")
             or exchange.get("event_title")
             or signal.get("description", "")
         )
+
+        # event_title: use field directly, or derive from market_description
+        event_title = exchange.get("event_title") or ""
+        if not event_title:
+            md = exchange.get("market_description") or ""
+            m = _RE_EVENT_TITLE.search(md)
+            if m:
+                event_title = f"Highest temperature in {m.group(1)} on {m.group(2)}?"
+
+        # market_group_item_title: use field directly, or derive from market_description
+        market_label = exchange.get("market_group_item_title") or ""
+        if not market_label:
+            md = exchange.get("market_description") or ""
+            m = _RE_BUCKET.search(md)
+            if m:
+                market_label = m.group(1)
 
         results.append({
             "id": row["id"],
             "received_at": row["received_at"],
             "description": description,
+            "event_title": event_title,
+            "market_group_item_title": market_label,
             "token_id": exchange.get("token_id") or signal.get("token_id", ""),
             "side": exchange.get("side") or signal.get("side", "buy"),
             "model_probability": signal.get("model_probability"),

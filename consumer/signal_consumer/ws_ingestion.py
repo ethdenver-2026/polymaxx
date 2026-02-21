@@ -56,9 +56,13 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
         raise RuntimeError("SignalPreviewMessage missing auction_id")
     producer_did = payload.get("producer_did")
     event_id = None
+    event_title = None
+    market_group_item_title = None
     exchanges = payload.get("exchanges")
     if isinstance(exchanges, list) and exchanges:
         event_id = exchanges[0].get("event_id")
+        event_title = exchanges[0].get("event_title")
+        market_group_item_title = exchanges[0].get("market_group_item_title")
     consumer_did = _resolve_consumer_did(settings)
     if settings.reputation_storage_backend == "0g_stub" and settings.reputation_0g_enabled:
         logger.warning(
@@ -71,6 +75,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
             consumer_did=consumer_did,
             producer_did=producer_did,
             event_id=event_id,
+            event_title=event_title,
+            market_group_item_title=market_group_item_title,
             bid_amount=0.0,
             auction_end_utc=payload.get("auction_end_utc"),
             outcome="insufficient_reputation",
@@ -86,6 +92,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
             consumer_did=consumer_did,
             producer_did=producer_did,
             event_id=event_id,
+            event_title=event_title,
+            market_group_item_title=market_group_item_title,
             bid_amount=0.0,
             auction_end_utc=payload.get("auction_end_utc"),
             outcome="bid_skipped",
@@ -117,6 +125,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
         consumer_did=consumer_did,
         producer_did=producer_did,
         event_id=event_id,
+        event_title=event_title,
+        market_group_item_title=market_group_item_title,
         bid_amount=bid_amount,
         auction_end_utc=payload.get("auction_end_utc"),
         outcome="bid_submitted",
@@ -148,6 +158,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
+                    event_title=event_title,
+                    market_group_item_title=market_group_item_title,
                     bid_amount=bid_amount,
                     outcome=response_type,
                     rejection_reason=bid_response.get("reason"),
@@ -168,6 +180,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
+                    event_title=event_title,
+                    market_group_item_title=market_group_item_title,
                     bid_amount=bid_response.get("bid_amount"),
                     outcome="won_offer",
                     payment_url=bid_response.get("x402_payment_url"),
@@ -194,6 +208,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
+                    event_title=event_title,
+                    market_group_item_title=market_group_item_title,
                     bid_amount=bid_amount,
                     outcome=str(bid_response.get("status", "PAYMENT_UNKNOWN")).lower(),
                     raw_message=bid_response,

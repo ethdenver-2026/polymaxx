@@ -11,6 +11,8 @@ class PreviewPolymarketInfo(TypedDict):
 
     exchange: Literal["polymarket"]
     event_id: str
+    event_title: str  # e.g., "Highest temperature in NYC on February 21?"
+    market_group_item_title: str  # e.g., "39°F or below"
     edge: float  # model_prob - market_price (adjusted for side)
     price_timestamp: str  # ISO timestamp
 

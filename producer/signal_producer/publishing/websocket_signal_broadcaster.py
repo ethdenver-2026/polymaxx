@@ -200,6 +200,8 @@ class SignalBroadcaster:
                 {
                     "exchange": "polymarket",
                     "event_id": first_exchange["event_id"],
+                    "event_title": first_exchange.get("event_title", ""),
+                    "market_group_item_title": first_exchange.get("market_group_item_title", ""),
                     "edge": float(first_exchange["edge"]),
                     "price_timestamp": str(first_exchange["price_timestamp"]),
                 }

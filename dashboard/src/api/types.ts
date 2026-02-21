@@ -73,6 +73,8 @@ export interface ConsumerSignal {
   id: number;
   received_at: number;
   description: string;
+  event_title: string;
+  market_group_item_title: string;
   token_id: string;
   side: string;
   model_probability: number | null;
@@ -127,6 +129,8 @@ export interface AuctionEvent {
   consumer_did: string;
   producer_did: string | null;
   event_id: string | null;
+  event_title: string | null;
+  market_group_item_title: string | null;
   bid_amount: number | null;
   auction_end_utc: string | null;
   outcome: string;
