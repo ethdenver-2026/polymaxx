@@ -14,7 +14,7 @@ from dataclasses import dataclass, asdict
 import structlog
 
 from ..config import CITIES, CityConfig
-from ..clients.open_meteo import OpenMeteoClient, EnsembleForecast
+from ..clients.weather.open_meteo import OpenMeteoClient, EnsembleForecast
 
 logger = structlog.get_logger()
 

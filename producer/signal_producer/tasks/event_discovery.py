@@ -11,7 +11,7 @@ import structlog
 from ..config import DEFAULT_CITIES
 
 if TYPE_CHECKING:
-    from ..clients.gamma import GammaClient
+    from ..clients.polymarket.gamma import GammaClient
     from ..data.polymarket_registry import MarketRegistry
     from ..data.polymarket_price_tracker import PriceTracker
 

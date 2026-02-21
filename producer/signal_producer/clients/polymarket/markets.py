@@ -9,7 +9,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .open_meteo import EnsembleForecast
+    from ..weather.open_meteo import EnsembleForecast
 
 
 @dataclass

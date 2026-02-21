@@ -12,7 +12,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..models.models import TrackedEvent, TrackedMarket, TrackedForecast
-from ..clients.markets import WeatherEvent, WeatherMarket
+from ..clients.polymarket.markets import WeatherEvent, WeatherMarket
 
 logger = structlog.get_logger()
 

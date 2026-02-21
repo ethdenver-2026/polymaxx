@@ -1,13 +1,23 @@
 """External API clients."""
-from .gamma import GammaClient
-from .noaa_cdo import NOAACDOClient, CITY_STATIONS
-from .markets import WeatherEvent, WeatherMarket, parse_weather_event, parse_temp_range, calculate_market_probability
-from .open_meteo import OpenMeteoClient, EnsembleForecast
+
+from .polymarket import (
+    GammaClient,
+    WeatherEvent,
+    WeatherMarket,
+    parse_weather_event,
+    parse_temp_range,
+    calculate_market_probability,
+)
+from .weather import (
+    OpenMeteoClient,
+    EnsembleForecast,
+    NOAACDOClient,
+    CITY_STATIONS,
+)
+from .llm_pricer import price_signal, ZgWsPricer
 
 __all__ = [
     "GammaClient",
-    "NOAACDOClient",
-    "CITY_STATIONS",
     "WeatherEvent",
     "WeatherMarket",
     "parse_weather_event",
@@ -15,4 +25,8 @@ __all__ = [
     "calculate_market_probability",
     "OpenMeteoClient",
     "EnsembleForecast",
+    "NOAACDOClient",
+    "CITY_STATIONS",
+    "price_signal",
+    "ZgWsPricer",
 ]
