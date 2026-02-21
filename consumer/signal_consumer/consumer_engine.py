@@ -17,8 +17,12 @@ logger = structlog.get_logger()
 def get_available_balance_usdc(settings: Settings) -> float:
     """Return currently available USDC for new trades."""
     if settings.trading_mode == "live":
-        balances = get_balances()
-        return float(balances.polymarket_usdc)
+        balances = get_balances(
+            private_key=settings.trading_wallet_private_key,
+            wallet_address=settings.trading_wallet_address,
+        )
+        # Trading capacity is wallet USDC on Polygon plus any USDC already deposited in Polymarket.
+        return float(balances.onchain_usdc + balances.polymarket_usdc)
     executed_notional = get_executed_notional_usd()
     available = settings.bankroll_usdc - executed_notional
     return max(0.0, float(available))

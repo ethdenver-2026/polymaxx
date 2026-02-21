@@ -25,14 +25,21 @@ class Settings(BaseSettings):
     execution_workers: int = Field(default=16, ge=1)
     execution_queue_maxsize: int = Field(default=1000, ge=1)
     consumer_did: str = Field(default="did:kite:consumer/default")
+    # Legacy/shared wallet identity (kept for backward compatibility).
     consumer_wallet_address: str = Field(default="0x0000000000000000000000000000000000000000")
-    consumer_default_bid_amount: float = Field(default=1.0, gt=0.0)
+    # Trading wallet identity (Polygon trading balance + CLOB trading key).
+    trading_wallet_address: str = Field(default="")
+    trading_wallet_private_key: str = Field(default="")
+    # Payment wallet identity (SIWx + x402 payment settlement key/address).
+    payment_wallet_address: str = Field(default="")
+    payment_wallet_private_key: str = Field(default="")
     consumer_bid_timeout_seconds: float = Field(default=25.0, ge=1.0)
     consumer_payment_auto_succeeds: bool = Field(default=True)
     bid_llm_provider: Literal["anthropic", "g0"] = Field(default="anthropic")
     bid_llm_temperature: float = Field(default=0.8, ge=0.0, le=1.0)
     bid_llm_max_bid_amount_usdc: float = Field(default=5.0, gt=0.0)
     bid_llm_request_timeout_seconds: float = Field(default=20.0, ge=1.0)
+    min_polygon_pol_for_bidding: float = Field(default=0.01, ge=0.0)
     anthropic_api_key: str = Field(default="")
     anthropic_bid_model: str = Field(default="claude-sonnet-4-6")
     g0_api_key: str = Field(default="")
@@ -74,7 +81,6 @@ class Settings(BaseSettings):
         "extra": "ignore",
     }
 
-    @model_validator(mode="after")
     def _validate_live_networks(self) -> "Settings":
         if self.trading_mode != "live":
             return self

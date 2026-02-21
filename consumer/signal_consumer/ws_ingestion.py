@@ -109,7 +109,7 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
         "version": 1,
         "auction_id": auction_id,
         "consumer_did": consumer_did,
-        "wallet_address": settings.consumer_wallet_address,
+        "wallet_address": settings.payment_wallet_address,
         "bid_amount": bid_amount,
     }
     log_auction_event(
@@ -211,11 +211,26 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
 
 async def determine_bid_for_preview(payload: dict, settings: Settings) -> BidDecision:
     balances = get_balances(
-        private_key=settings.polymarket_private_key,
-        wallet_address=settings.consumer_wallet_address,
+        private_key=settings.trading_wallet_private_key,
+        wallet_address=settings.trading_wallet_address,
     )
+    if balances.onchain_pol < settings.min_polygon_pol_for_bidding:
+        rationale = (
+            "insufficient_polygon_pol: "
+            f"have={balances.onchain_pol:.8f}, "
+            f"required={settings.min_polygon_pol_for_bidding:.8f}"
+        )
+        logger.info(
+            "Skipping bid due to low Polygon gas balance",
+            auction_id=payload.get("auction_id"),
+            trading_wallet_address=settings.trading_wallet_address,
+            onchain_pol=balances.onchain_pol,
+            min_polygon_pol_for_bidding=settings.min_polygon_pol_for_bidding,
+        )
+        return BidDecision(should_bid=False, bid_amount=0.0, rationale=rationale)
+
     payment_usdc = get_payment_usdc_balance(
-        wallet_address=settings.consumer_wallet_address,
+        wallet_address=settings.payment_wallet_address,
         rpc_url=settings.x402_v2_rpc_url,
         token_address=settings.x402_v2_token_address,
         token_decimals=settings.x402_v2_token_decimals,
@@ -272,7 +287,7 @@ def _execute_payment_for_win_notice(
         payment_request = AuctionPaymentRequest(
             auction_id=auction_id,
             consumer_did=consumer_did,
-            wallet_address=settings.consumer_wallet_address,
+            wallet_address=settings.payment_wallet_address,
             producer_wallet_address=str(bid_response.get("producer_wallet_address", "")).strip(),
             x402_payment_url=payment_url,
             bid_amount=bid_amount,
@@ -292,7 +307,7 @@ def _execute_payment_for_win_notice(
             siwx_challenge_url=settings.siwx_challenge_url,
             siwx_auth_url=settings.siwx_auth_url,
             siwx_app_id=settings.siwx_app_id,
-            siwx_wallet_private_key=settings.siwx_wallet_private_key,
+            siwx_wallet_private_key=settings.payment_wallet_private_key,
         )
         success = process_auction_payment(
             request=payment_request,
@@ -331,7 +346,7 @@ def _execute_payment_for_win_notice(
 def _resolve_consumer_did(settings: Settings) -> str:
     return validate_consumer_did_wallet_binding(
         consumer_did=settings.consumer_did,
-        wallet_address=settings.consumer_wallet_address,
+        wallet_address=settings.payment_wallet_address,
         chain_id=settings.chain_id,
     )
 
