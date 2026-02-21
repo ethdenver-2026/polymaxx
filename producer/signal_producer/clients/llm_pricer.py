@@ -8,6 +8,7 @@ Two modes:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 
 import httpx
@@ -32,19 +33,24 @@ def _mock_price(preview: ProducerSignalPreview) -> float:
 
 def _build_pricing_prompt(preview: ProducerSignalPreview) -> str:
     max_edge = max(abs(ex["edge"]) for ex in preview.exchanges) if preview.exchanges else 0.0
-    num_exchanges = len(preview.exchanges)
 
     return (
-        "You are a pricing engine for a signal marketplace. "
-        "A producer has generated a trading signal and needs a fair price in USDC.\n\n"
-        f"Signal type: {preview.signal_type}\n"
-        f"Edge magnitude: {max_edge:.4f}\n"
-        f"Model confidence: {preview.confidence:.4f}\n"
-        f"Number of exchanges: {num_exchanges}\n"
-        f"Model probability: {preview.model_probability:.4f}\n\n"
-        "Based on these parameters, what is a fair price for this signal in USDC? "
-        f"The price must be between {MIN_PRICE} and {MAX_PRICE}. "
-        "Respond with ONLY a single number (the price), nothing else."
+        "You are a pricing engine for a prediction-market signal marketplace.\n"
+        "A producer is auctioning a trading signal. Consumers see a preview and bid to unlock it.\n\n"
+        "Signal preview (what the consumer sees):\n"
+        f"- Producer: {preview.producer_did}\n"
+        f"- Signal type: {preview.signal_type}\n"
+        f"- Edge (model vs market): {max_edge:.4f}\n"
+        f"- Model confidence: {preview.confidence:.2f}\n"
+        f"- Last price paid for a signal: ${preview.last_price_paid:.2f}\n"
+        f"- Auction ends: {preview.auction_end_utc}\n\n"
+        "Price factors:\n"
+        "- Higher edge = more valuable signal (bigger mispricing found)\n"
+        "- Higher confidence = more reliable (tighter ensemble spread)\n"
+        "- Last price paid anchors consumer expectations\n"
+        "- Producer reputation matters but is hard to quantify early on\n\n"
+        f"Set a suggested starting price in USDC between {MIN_PRICE} and {MAX_PRICE}.\n"
+        "Respond with ONLY a single number, nothing else."
     )
 
 
@@ -58,10 +64,15 @@ def _get_0g_service_info() -> dict:
         capture_output=True,
         text=True,
         timeout=30,
+        env={**__import__("os").environ, "ZG_NETWORK": "mainnet"},
     )
     if result.returncode != 0:
         raise RuntimeError(f"0g-auth-helper failed: {result.stderr}")
-    return json.loads(result.stdout)
+    # SDK may print debug lines before the JSON — grab the last line starting with '{'
+    for line in reversed(result.stdout.strip().splitlines()):
+        if line.startswith("{"):
+            return json.loads(line)
+    raise RuntimeError(f"No JSON found in 0g-auth-helper output: {result.stdout[:200]}")
 
 
 async def _0g_price(preview: ProducerSignalPreview, endpoint: str, model: str, temperature: float) -> float:
@@ -80,7 +91,7 @@ async def _0g_price(preview: ProducerSignalPreview, endpoint: str, model: str, t
 
     prompt = _build_pricing_prompt(preview)
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{actual_endpoint}/chat/completions",
             headers={"Content-Type": "application/json", **auth_headers},
@@ -88,17 +99,32 @@ async def _0g_price(preview: ProducerSignalPreview, endpoint: str, model: str, t
                 "model": actual_model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": temperature,
-                "max_tokens": 20,
+                "max_tokens": 4096,
             },
         )
         resp.raise_for_status()
         data = resp.json()
 
-    content = data["choices"][0]["message"]["content"].strip()
+    message = data["choices"][0]["message"]
+    content = message.get("content") or ""
+    # Some models (e.g. GLM) put reasoning in a separate field
+    reasoning = message.get("reasoning_content") or ""
+    raw = content.strip() or reasoning.strip()
+
+    if not raw:
+        logger.warning("LLM returned empty response, falling back to mock")
+        return _mock_price(preview)
+
+    # Extract the first number-like token from the response
+    match = re.search(r"\d+\.?\d*", raw)
+    if not match:
+        logger.warning("LLM returned no numeric value, falling back to mock", raw=raw[:200])
+        return _mock_price(preview)
+
     try:
-        price = float(content)
+        price = float(match.group())
     except ValueError:
-        logger.warning("LLM returned non-numeric price, falling back to mock", raw=content)
+        logger.warning("LLM returned non-numeric price, falling back to mock", raw=raw[:200])
         return _mock_price(preview)
 
     return round(max(MIN_PRICE, min(MAX_PRICE, price)), 4)
