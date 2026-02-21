@@ -20,7 +20,7 @@ except ImportError:
     websockets = None  # type: ignore
     ConnectionClosed = Exception  # type: ignore
 
-from ..registry.market_registry import MarketRegistry
+from .polymarket_registry import MarketRegistry
 
 logger = structlog.get_logger()
 

@@ -17,9 +17,9 @@ from ..clients.gamma import GammaClient
 from ..models.models import Base
 from ..config import get_settings, CITIES
 from ..publishing.websocket_signal_broadcaster import SignalBroadcaster
-from ..registry.market_registry import MarketRegistry
+from ..data.polymarket_registry import MarketRegistry
 from ..clients.open_meteo import OpenMeteoClient
-from ..tracker.price_tracker import PriceTracker
+from ..data.polymarket_price_tracker import PriceTracker
 
 from .event_discovery import EventDiscoveryTask
 from .signal_generator import SignalGeneratorTask

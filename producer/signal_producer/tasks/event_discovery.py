@@ -12,8 +12,8 @@ from ..config import DEFAULT_CITIES
 
 if TYPE_CHECKING:
     from ..clients.gamma import GammaClient
-    from ..registry.market_registry import MarketRegistry
-    from ..tracker.price_tracker import PriceTracker
+    from ..data.polymarket_registry import MarketRegistry
+    from ..data.polymarket_price_tracker import PriceTracker
 
 logger = structlog.get_logger()
 

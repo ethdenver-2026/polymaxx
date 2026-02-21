@@ -6,8 +6,8 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, UTC
 
-from signal_producer.registry.market_registry import MarketRegistry
-from signal_producer.tracker.price_tracker import PriceTracker, CLOB_WS_URL
+from signal_producer.data.polymarket_registry import MarketRegistry
+from signal_producer.data.polymarket_price_tracker import PriceTracker, CLOB_WS_URL
 
 
 class TestPriceTracker:

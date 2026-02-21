@@ -26,7 +26,7 @@ from ..config import CITIES
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
-    from ..registry.market_registry import MarketRegistry, CachedEvent, CachedMarket
+    from ..data.polymarket_registry import MarketRegistry, CachedEvent, CachedMarket
     from ..clients.open_meteo import OpenMeteoClient
     from ..publishing.websocket_signal_broadcaster import SignalBroadcaster
 

@@ -189,7 +189,7 @@ def collect(
         collect --max-days 4       # Collect 1, 2, 3, and 4-day forecasts
         collect -c nyc,chicago -m 4  # Collect 1-4 day for specific cities
     """
-    from .models.collector import ForecastCollector
+    from .data import ForecastCollector
 
     city_list = None
     if cities_opt:
@@ -231,7 +231,7 @@ def collect(
 @app.command()
 def list_forecasts():
     """List all stored ensemble forecasts."""
-    from .models.collector import ForecastCollector
+    from .data import ForecastCollector
 
     collector = ForecastCollector()
     forecasts = collector.list_forecasts()
