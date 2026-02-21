@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from ..registry.market_registry import MarketRegistry, CachedEvent, CachedMarket
     from ..clients.open_meteo import OpenMeteoClient
-    from ..publishing.websocket import SignalBroadcaster
+    from ..publishing.websocket_signal_broadcaster import SignalBroadcaster
 
 logger = structlog.get_logger()
 

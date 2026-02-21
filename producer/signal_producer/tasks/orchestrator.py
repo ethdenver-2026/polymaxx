@@ -16,7 +16,7 @@ from sqlalchemy import create_engine
 from ..clients.gamma import GammaClient
 from ..models.models import Base
 from ..config import get_settings, CITIES
-from ..publishing.websocket import SignalBroadcaster
+from ..publishing.websocket_signal_broadcaster import SignalBroadcaster
 from ..registry.market_registry import MarketRegistry
 from ..clients.open_meteo import OpenMeteoClient
 from ..tracker.price_tracker import PriceTracker
