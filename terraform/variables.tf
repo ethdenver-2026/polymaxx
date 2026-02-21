@@ -23,13 +23,13 @@ variable "public_subnet_cidr" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type. Keep this to small t2/t3 classes."
+  description = "EC2 instance type for the host."
   type        = string
-  default     = "t3.micro"
+  default     = "m6i.large"
 
   validation {
-    condition     = contains(["t2.micro", "t3.micro"], var.instance_type)
-    error_message = "instance_type must be either t2.micro or t3.micro."
+    condition     = contains(["t2.micro", "t3.micro", "t2.small", "t3.small", "t3.medium", "m6i.large"], var.instance_type)
+    error_message = "instance_type must be one of t2.micro, t3.micro, t2.small, t3.small, t3.medium, or m6i.large."
   }
 }
 
