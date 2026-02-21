@@ -34,7 +34,7 @@ uv sync
 
 # Dashboard
 cd dashboard
-npm install
+pnpm install
 ```
 
 `uv sync` installs all core dependencies including TSA signal generation (numpy, pandas, xgboost) and trading (py-clob-client). Dev tools (pytest, ruff, mypy) are included automatically in development.

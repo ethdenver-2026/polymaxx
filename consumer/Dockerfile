@@ -10,11 +10,18 @@ RUN apt-get update \
 RUN pip install --no-cache-dir uv
 
 WORKDIR /app
-COPY shared /app/shared
-COPY consumer /app/consumer
 
+# Copy dependency metadata first (changes rarely) so Docker caches the install layer
+COPY shared /app/shared
+COPY consumer/pyproject.toml consumer/uv.lock /app/consumer/
+
+# Install dependencies (cached unless pyproject.toml or uv.lock change)
 WORKDIR /app/consumer
 RUN mkdir -p /app/data
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Now copy source code (changes often) and install the project itself
+COPY consumer /app/consumer
 RUN uv sync --frozen --no-dev
 
 EXPOSE 9866

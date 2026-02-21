@@ -24,7 +24,7 @@ export function Header({ walletAddress, consumerConnected }: HeaderProps) {
             className="text-lg font-bold tracking-tight"
             style={{ fontFamily: "var(--font-display)" }}
           >
-            SIGNAL MARKET
+            Polymaxx
           </h1>
           <span className="text-[10px] text-muted-foreground tracking-widest uppercase ml-1">
             v0.1
@@ -35,9 +35,7 @@ export function Header({ walletAddress, consumerConnected }: HeaderProps) {
           <div className="flex items-center gap-2">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
-                consumerConnected
-                  ? "bg-signal-green live-dot"
-                  : "bg-signal-red"
+                consumerConnected ? "bg-signal-green live-dot" : "bg-signal-red"
               }`}
             />
             <span className="text-xs text-muted-foreground uppercase tracking-wider">

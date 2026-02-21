@@ -10,12 +10,19 @@ RUN apt-get update \
 RUN pip install --no-cache-dir uv
 
 WORKDIR /app
-COPY shared /app/shared
-COPY producer /app/producer
-COPY --from=tsa . /app/tsa-market-manipulation
 
+# Copy dependency metadata first (changes rarely) so Docker caches the install layer
+COPY shared /app/shared
+COPY producer/pyproject.toml producer/uv.lock /app/producer/
+
+# Install dependencies (cached unless pyproject.toml or uv.lock change)
 WORKDIR /app/producer
 RUN mkdir -p /app/producer/data
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Now copy source code (changes often) and install the project itself
+COPY producer /app/producer
+COPY --from=tsa . /app/tsa-market-manipulation
 RUN uv sync --frozen --no-dev
 
 ENV TSA_PROJECT_PATH=/app/tsa-market-manipulation
