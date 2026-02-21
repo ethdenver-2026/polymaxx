@@ -174,37 +174,69 @@ def log_auction_event(
 
 
 def get_auction_events(limit: int = 100) -> list[dict]:
-    """Return recent auction events from consumer_auction_log."""
+    """Return recent auctions, collapsed to one row per auction_id.
+
+    Each row merges all lifecycle events (bid_submitted → won_offer →
+    payment_succeeds etc.) into a single summary with the final outcome.
+    Smoke/seeded data is always excluded.
+    """
     init_db()
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT * FROM consumer_auction_log ORDER BY received_at DESC LIMIT ?",
-        (limit,),
+        "SELECT * FROM consumer_auction_log ORDER BY received_at ASC",
     ).fetchall()
     conn.close()
-    return [
-        {
-            "id": row["id"],
-            "received_at": row["received_at"],
-            "auction_id": row["auction_id"],
-            "consumer_did": row["consumer_did"],
-            "producer_did": row["producer_did"],
-            "event_id": row["event_id"],
-            "bid_amount": row["bid_amount"],
-            "auction_end_utc": row["auction_end_utc"],
-            "outcome": row["outcome"],
-            "rejection_reason": row["rejection_reason"],
-            "winner_did": row["winner_did"],
-            "winning_paid_amount": row["winning_paid_amount"],
-            "payment_url": row["payment_url"],
-            "x402_network": row["x402_network"],
-            "x402_asset": row["x402_asset"],
-            "metadata": json.loads(row["metadata_json"]) if row["metadata_json"] else None,
-            "raw_message": json.loads(row["raw_message_json"]),
-        }
-        for row in rows
-    ]
+
+    # Group events by auction_id, merging into a single row per auction.
+    auctions: dict[str, dict] = {}
+    for row in rows:
+        raw = json.loads(row["raw_message_json"])
+        if raw.get("smoke"):
+            continue  # always skip seeded data
+
+        aid = row["auction_id"]
+        if aid not in auctions:
+            auctions[aid] = {
+                "id": row["id"],
+                "received_at": row["received_at"],
+                "auction_id": aid,
+                "consumer_did": row["consumer_did"],
+                "producer_did": None,
+                "event_id": None,
+                "bid_amount": None,
+                "auction_end_utc": None,
+                "outcome": row["outcome"],
+                "rejection_reason": None,
+                "winner_did": None,
+                "winning_paid_amount": None,
+                "payment_url": None,
+            }
+
+        entry = auctions[aid]
+        # Always update to the latest outcome
+        entry["outcome"] = row["outcome"]
+        # Merge non-null fields from later events
+        if row["producer_did"]:
+            entry["producer_did"] = row["producer_did"]
+        if row["event_id"]:
+            entry["event_id"] = row["event_id"]
+        if row["bid_amount"]:
+            entry["bid_amount"] = row["bid_amount"]
+        if row["auction_end_utc"]:
+            entry["auction_end_utc"] = row["auction_end_utc"]
+        if row["rejection_reason"]:
+            entry["rejection_reason"] = row["rejection_reason"]
+        if row["winner_did"]:
+            entry["winner_did"] = row["winner_did"]
+        if row["winning_paid_amount"]:
+            entry["winning_paid_amount"] = row["winning_paid_amount"]
+        if row["payment_url"]:
+            entry["payment_url"] = row["payment_url"]
+
+    # Return most-recent-first, limited
+    result = sorted(auctions.values(), key=lambda a: a["received_at"], reverse=True)
+    return result[:limit]
 
 
 def log_signal(signal_data: dict, response: dict) -> None:
@@ -262,12 +294,23 @@ def get_signals(limit: int = 100) -> list[dict]:
     for row in rows:
         signal = json.loads(row["signal_json"])
         raw_checks = row["strategy_checks"] if "strategy_checks" in row.keys() else None
+
+        # Extract from canonical ProducerSignal format
+        exchange = signal.get("exchanges", [{}])[0] if signal.get("exchanges") else {}
+        metadata = signal.get("metadata", {})
+
+        # Build description from market_description or legacy description field
+        description = (
+            exchange.get("market_description")
+            or signal.get("description", "")
+        )
+
         results.append({
             "id": row["id"],
             "received_at": row["received_at"],
-            "description": signal.get("description", ""),
-            "token_id": signal.get("token_id", ""),
-            "side": signal.get("side", "buy"),
+            "description": description,
+            "token_id": exchange.get("token_id") or signal.get("token_id", ""),
+            "side": exchange.get("side") or signal.get("side", "buy"),
             "model_probability": signal.get("model_probability"),
             "position_size_usd": signal.get("position_size_usd"),
             "action": row["action"],
@@ -278,6 +321,9 @@ def get_signals(limit: int = 100) -> list[dict]:
             "order_id": row["order_id"],
             "errors": json.loads(row["errors"]) if row["errors"] else [],
             "strategy_checks": json.loads(raw_checks) if raw_checks else None,
+            "city": metadata.get("city"),
+            "event_id": exchange.get("event_id"),
+            "edge": exchange.get("edge"),
         })
     return results
 
@@ -331,6 +377,21 @@ def get_executed_notional_usd() -> float:
             FROM consumer_signal_log
             WHERE action IN ('executed', 'simulated')
         ) AS signal_json_extract
+        """
+    ).fetchone()
+    conn.close()
+    return float(row[0] or 0.0)
+
+
+def get_auction_spend_usd() -> float:
+    """Return total USDC spent on successful auction payments."""
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(bid_amount), 0.0)
+        FROM consumer_auction_log
+        WHERE outcome = 'payment_succeeds'
         """
     ).fetchone()
     conn.close()

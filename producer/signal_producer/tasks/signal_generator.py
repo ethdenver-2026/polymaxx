@@ -369,9 +369,12 @@ class SignalGeneratorTask:
         self._running = True
         logger.info(
             "Signal generator starting",
-            interval_hours=self._forecast_interval / 3600,
+            interval_seconds=self._forecast_interval,
             edge_threshold=f"{self._edge_threshold:.0%}",
         )
+
+        # Wait for price tracker to populate initial prices
+        await asyncio.sleep(15)
 
         while self._running:
             await self._generate_once()

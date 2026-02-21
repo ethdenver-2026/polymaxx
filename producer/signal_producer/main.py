@@ -94,18 +94,40 @@ def main():
     os.makedirs("data", exist_ok=True)
 
     if args.producer:
-        from .tasks import run_producer
+        from .tasks.orchestrator import ProducerOrchestrator
+        from .ws_server import app, set_broadcaster
+
+        import uvicorn
 
         cities = None
         if args.cities:
             cities = [c.strip() for c in args.cities.split(",")]
 
         logger.info(
-            "Starting producer",
+            "Starting producer with WebSocket server",
             cities=cities or "all",
             db_path=args.db_path,
+            host=args.host,
+            port=args.port,
         )
-        asyncio.run(run_producer(db_path=args.db_path, cities=cities))
+
+        async def _run_producer_and_server() -> None:
+            orchestrator = ProducerOrchestrator(db_path=args.db_path, cities=cities)
+            orchestrator._init_components()
+            set_broadcaster(orchestrator.broadcaster)
+
+            server = uvicorn.Server(
+                uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
+            )
+            server_task = asyncio.create_task(server.serve())
+            orchestrator._setup_signal_handlers()
+            try:
+                await orchestrator._run_tasks()
+            finally:
+                server.should_exit = True
+                await server_task
+
+        asyncio.run(_run_producer_and_server())
         return
 
     if args.serve:

@@ -130,7 +130,7 @@ export function SignalsTab() {
             <tr className="border-b border-[#1e2235]">
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold w-6"></th>
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Time</th>
-              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold min-w-[200px]">Signal</th>
+              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Signal</th>
               <th className="text-right px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Model</th>
               <th className="text-right px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Sig Price</th>
               <th className="text-right px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Live Price</th>
@@ -160,8 +160,10 @@ export function SignalsTab() {
                       <div className="num">{formatTime(s.received_at)}</div>
                       <div className="text-[10px] text-muted-foreground/50">{formatDate(s.received_at)}</div>
                     </td>
-                    <td className="px-4 py-2.5 max-w-[280px]">
-                      <div className="truncate">{s.description || s.token_id.slice(0, 20) + "..."}</div>
+                    <td className="px-4 py-2.5">
+                      <div title={s.description}>
+                        {s.description || s.token_id.slice(0, 20) + "..."}
+                      </div>
                       {s.action === "skipped" && <SkipReason errors={s.errors} />}
                     </td>
                     <td className="px-4 py-2.5 text-right num text-signal-cyan">

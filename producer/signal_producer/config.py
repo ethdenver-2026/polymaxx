@@ -7,8 +7,12 @@ from pydantic import Field
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    # Trading mode — "paper" uses relaxed thresholds, "live" is strict
+    trading_mode: str = Field(default="paper")  # "paper" or "live"
+
     # Signal generation
     edge_threshold_pct: float = Field(default=8.0)
+    paper_edge_threshold_pct: float = Field(default=2.0)  # More lenient for paper
 
     # API Keys
     venice_api_key: str = Field(default="")
@@ -34,6 +38,7 @@ class Settings(BaseSettings):
     zg_ws_uri: str = Field(default="ws://localhost:8089")  # 0G WS pricer sidecar
     llm_temperature: float = Field(default=0.8)  # for 0G pricing calls (0.7-0.9)
     signal_preview_ttl_minutes: int = Field(default=30)  # how long previews stay valid
+    forecast_interval_seconds: int = Field(default=21600)  # 6h live, override for paper
     zg_private_key: str = Field(default="")  # wallet key for 0G
 
     model_config = {

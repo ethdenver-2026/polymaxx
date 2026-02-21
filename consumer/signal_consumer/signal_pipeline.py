@@ -186,7 +186,11 @@ def evaluate_strategy(
         )
 
     live_edge = record.model_probability - live_price
-    if live_edge < settings.edge_threshold_pct / 100:
+    effective_threshold = (
+        settings.paper_edge_threshold_pct if settings.trading_mode == "paper"
+        else settings.edge_threshold_pct
+    )
+    if live_edge < effective_threshold / 100:
         return StrategyDecision(
             should_trade=False,
             reasons=["edge_below_threshold"],
