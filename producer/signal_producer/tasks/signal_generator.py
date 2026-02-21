@@ -330,10 +330,13 @@ class SignalGeneratorTask:
                 # Persist full signal to database for audit
                 self._persist_signal(signal)
 
-                # Price the signal via LLM (logged for analytics)
+                # Price the signal via LLM → structured AuctionBidMessage
                 preview = self._build_preview(signal)
-                suggested_price = await price_signal(
+                bid = await price_signal(
                     preview,
+                    auction_id=preview.auction_id,
+                    consumer_did=self._producer_id,
+                    wallet_address="",
                     mode=self._llm_pricing_mode,
                     ws_uri=self._zg_ws_uri,
                     temperature=self._llm_temperature,
@@ -341,9 +344,9 @@ class SignalGeneratorTask:
 
                 logger.info(
                     "LLM signal pricing",
-                    auction_id=preview.auction_id,
+                    auction_id=bid.auction_id,
+                    bid_amount=bid.bid_amount,
                     producer_did=preview.producer_did,
-                    suggested_price_usd=suggested_price,
                     last_paid=self._last_price_paid_usd,
                     edge=signal.exchanges[0].get("edge") if signal.exchanges else None,
                 )

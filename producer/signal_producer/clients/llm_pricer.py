@@ -3,59 +3,52 @@
 Two modes:
 - mock: Formula-based pricing for when 0G is unavailable.
 - 0g: Connects to the 0G WS pricer (scripts/0g-ws-pricer.mjs) over WebSocket.
+
+Returns structured AuctionBidMessage dicts ready to send to the producer.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import re
 import uuid
 
 import structlog
 import websockets
 from websockets.asyncio.client import ClientConnection
 
-from ..signals.types.producer_signal_preview import ProducerSignalPreview
+from ..signals.types.producer_signal_preview import (
+    ProducerSignalPreview,
+    AuctionBidMessage,
+)
 
 logger = structlog.get_logger()
 
-# Price bounds
-MIN_PRICE = 0.01
-MAX_PRICE = 5.00
+# Bid bounds
+MIN_BID = 0.01
+MAX_BID = 5.00
 BASE_PRICE = 1.00
 
 # Default WebSocket URI for the 0G pricer sidecar
 DEFAULT_ZG_WS_URI = "ws://localhost:8089"
 
 
-def _mock_price(preview: ProducerSignalPreview) -> float:
-    """Formula-based pricing: abs(edge) * confidence * base_price."""
+def _mock_bid(
+    preview: ProducerSignalPreview,
+    auction_id: str,
+    consumer_did: str,
+    wallet_address: str,
+) -> AuctionBidMessage:
+    """Formula-based bid: abs(edge) * confidence * base_price."""
     max_edge = max(abs(ex["edge"]) for ex in preview.exchanges) if preview.exchanges else 0.0
-    price = max_edge * preview.confidence * BASE_PRICE
-    return round(max(MIN_PRICE, min(MAX_PRICE, price)), 4)
+    bid_amount = max_edge * preview.confidence * BASE_PRICE
+    bid_amount = round(max(MIN_BID, min(MAX_BID, bid_amount)), 4)
 
-
-def _build_pricing_prompt(preview: ProducerSignalPreview) -> str:
-    max_edge = max(abs(ex["edge"]) for ex in preview.exchanges) if preview.exchanges else 0.0
-
-    return (
-        "You are a pricing engine for a prediction-market signal marketplace.\n"
-        "A producer is auctioning a trading signal. Consumers see a preview and bid to unlock it.\n\n"
-        "Signal preview (what the consumer sees):\n"
-        f"- Producer: {preview.producer_did}\n"
-        f"- Signal type: {preview.signal_type}\n"
-        f"- Edge (model vs market): {max_edge:.4f}\n"
-        f"- Model confidence: {preview.confidence:.2f}\n"
-        f"- Last price paid for a signal: ${preview.last_price_paid:.2f}\n"
-        f"- Auction ends: {preview.auction_end_utc}\n\n"
-        "Price factors:\n"
-        "- Higher edge = more valuable signal (bigger mispricing found)\n"
-        "- Higher confidence = more reliable (tighter ensemble spread)\n"
-        "- Last price paid anchors consumer expectations\n"
-        "- Producer reputation matters but is hard to quantify early on\n\n"
-        f"Set a suggested starting price in USDC between {MIN_PRICE} and {MAX_PRICE}.\n"
-        "Respond with ONLY a single number, nothing else."
+    return AuctionBidMessage(
+        auction_id=auction_id,
+        consumer_did=consumer_did,
+        bid_amount=bid_amount,
+        wallet_address=wallet_address,
     )
 
 
@@ -71,7 +64,6 @@ class ZgWsPricer:
     async def connect(self) -> None:
         """Connect to the 0G WS pricer and wait for the ready message."""
         self._ws = await websockets.connect(self._ws_uri)
-        # Wait for ready handshake
         raw = await asyncio.wait_for(self._ws.recv(), timeout=10)
         msg = json.loads(raw)
         if msg.get("type") == "ready":
@@ -90,73 +82,113 @@ class ZgWsPricer:
             await self._ws.close()
             self._connected = False
 
-    async def price(self, preview: ProducerSignalPreview, temperature: float) -> float:
-        """Send a pricing request over WebSocket and return the price."""
+    async def get_bid(
+        self,
+        preview: ProducerSignalPreview,
+        auction_id: str,
+        consumer_did: str,
+        wallet_address: str,
+        temperature: float,
+    ) -> AuctionBidMessage:
+        """Send a pricing request and return a structured AuctionBidMessage."""
         if not self._connected or not self._ws:
             await self.connect()
 
         request_id = str(uuid.uuid4())
-        prompt = _build_pricing_prompt(preview)
+        max_edge = max(abs(ex["edge"]) for ex in preview.exchanges) if preview.exchanges else 0.0
 
         await self._ws.send(json.dumps({
             "type": "price_request",
             "request_id": request_id,
-            "prompt": prompt,
+            "auction_id": auction_id,
+            "consumer_did": consumer_did,
+            "wallet_address": wallet_address,
+            "preview": {
+                "signal_type": preview.signal_type,
+                "producer_did": preview.producer_did,
+                "edge": max_edge,
+                "confidence": preview.confidence,
+                "last_price_paid": preview.last_price_paid,
+                "auction_end_utc": preview.auction_end_utc,
+            },
             "temperature": temperature,
         }))
 
-        # Wait for the matching response (120s for reasoning models)
         raw = await asyncio.wait_for(self._ws.recv(), timeout=120)
         resp = json.loads(raw)
 
         if resp.get("error"):
             raise RuntimeError(f"0G pricer error: {resp['error']}")
 
-        price = resp.get("price")
-        if price is None:
-            raise RuntimeError(f"No price in response: {resp.get('raw', '')[:200]}")
+        bid_data = resp.get("bid")
+        if not bid_data or bid_data.get("bid_amount") is None:
+            raise RuntimeError(f"No bid in response: {resp}")
 
-        return round(max(MIN_PRICE, min(MAX_PRICE, float(price))), 4)
+        return AuctionBidMessage(
+            auction_id=bid_data["auction_id"],
+            consumer_did=bid_data["consumer_did"],
+            bid_amount=float(bid_data["bid_amount"]),
+            wallet_address=bid_data["wallet_address"],
+        )
 
 
-# Module-level singleton — reused across pricing calls
+# Module-level singleton
 _pricer: ZgWsPricer | None = None
 
 
-async def _0g_price(preview: ProducerSignalPreview, ws_uri: str, temperature: float) -> float:
-    """Price a signal via the 0G WebSocket pricer."""
+async def _0g_bid(
+    preview: ProducerSignalPreview,
+    auction_id: str,
+    consumer_did: str,
+    wallet_address: str,
+    ws_uri: str,
+    temperature: float,
+) -> AuctionBidMessage:
+    """Get a bid via the 0G WebSocket pricer."""
     global _pricer
     if _pricer is None:
         _pricer = ZgWsPricer(ws_uri=ws_uri)
 
     try:
-        return await _pricer.price(preview, temperature)
+        return await _pricer.get_bid(preview, auction_id, consumer_did, wallet_address, temperature)
     except (websockets.ConnectionClosed, OSError):
-        # Connection dropped — reconnect once and retry
         logger.warning("0G WS connection lost, reconnecting")
         _pricer = ZgWsPricer(ws_uri=ws_uri)
-        return await _pricer.price(preview, temperature)
+        return await _pricer.get_bid(preview, auction_id, consumer_did, wallet_address, temperature)
 
 
 async def price_signal(
     preview: ProducerSignalPreview,
+    auction_id: str = "",
+    consumer_did: str = "",
+    wallet_address: str = "",
     mode: str = "mock",
     ws_uri: str = DEFAULT_ZG_WS_URI,
     temperature: float = 0.8,
-) -> float:
-    """Price a signal preview. Returns price in USDC.
+) -> AuctionBidMessage:
+    """Price a signal preview. Returns a structured AuctionBidMessage.
 
     Args:
         preview: The signal preview to price.
+        auction_id: Auction to bid on.
+        consumer_did: Identity of the bidding consumer.
+        wallet_address: Consumer's wallet address.
         mode: "mock" for formula-based, "0g" for 0G LLM via WebSocket.
         ws_uri: WebSocket URI of the 0G pricer sidecar.
         temperature: LLM temperature (0.7-0.9 for natural variation).
     """
     if mode == "mock":
-        return _mock_price(preview)
+        return _mock_bid(preview, auction_id, consumer_did, wallet_address)
 
     try:
-        return await _0g_price(preview, ws_uri=ws_uri, temperature=temperature)
+        return await _0g_bid(
+            preview,
+            auction_id=auction_id,
+            consumer_did=consumer_did,
+            wallet_address=wallet_address,
+            ws_uri=ws_uri,
+            temperature=temperature,
+        )
     except Exception as e:
         logger.error("0G WS pricing failed, falling back to mock", error=str(e))
-        return _mock_price(preview)
+        return _mock_bid(preview, auction_id, consumer_did, wallet_address)
