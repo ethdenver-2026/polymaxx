@@ -1,16 +1,18 @@
-"""Signal type contracts - re-exported from shared schema."""
+"""Shared signal types for producer-consumer wire protocol."""
 
-from signal_schema import (
-    AuctionBidMessage,
-    AuctionBidRejected,
+from .producer_signal import (
     ForecastSource,
     PolymarketInfo,
-    PreviewPolymarketInfo,
     ProducerSignal,
-    ProducerSignalPreview,
-    SignalPreviewMessage,
     SignalType,
     WeatherMetadata,
+)
+from .auction_messages import (
+    AuctionBidMessage,
+    AuctionBidRejected,
+    PreviewPolymarketInfo,
+    ProducerSignalPreview,
+    SignalPreviewMessage,
 )
 
 __all__ = [

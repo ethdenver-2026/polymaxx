@@ -17,7 +17,7 @@ import structlog
 import websockets
 from websockets.asyncio.client import ClientConnection
 
-from ..signals.types.producer_signal_preview import (
+from ..signals.types import (
     ProducerSignalPreview,
     AuctionBidMessage,
 )
