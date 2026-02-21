@@ -13,13 +13,29 @@ class BidLlmClient(Protocol):
     async def decide_bid(self, context: BidPricingInput) -> BidDecision: ...
 
 
-def parse_bid_decision_json(raw_text: str) -> BidDecision:
+def _extract_json_object(raw_text: str) -> dict:
+    decoder = json.JSONDecoder()
+    stripped = raw_text.strip()
     try:
-        parsed = json.loads(raw_text)
+        parsed, _ = decoder.raw_decode(stripped)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    start = stripped.find("{")
+    if start == -1:
+        raise RuntimeError("LLM response does not contain JSON object")
+    try:
+        parsed, _ = decoder.raw_decode(stripped[start:])
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"LLM response is not valid JSON: {exc}") from exc
     if not isinstance(parsed, dict):
         raise RuntimeError(f"LLM response must be a JSON object, got {type(parsed).__name__}")
+    return parsed
+
+
+def parse_bid_decision_json(raw_text: str) -> BidDecision:
+    parsed = _extract_json_object(raw_text)
     missing = [field for field in ("should_bid", "bid_amount", "rationale") if field not in parsed]
     if missing:
         raise RuntimeError(f"LLM response missing required fields: {', '.join(missing)}")

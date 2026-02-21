@@ -10,7 +10,13 @@ from signal_consumer.ws_ingestion import _submit_bid_for_preview, handle_raw_ws_
 
 
 def _settings(**overrides: object) -> Settings:
-    base: dict[str, object] = {"trading_mode": "paper", "bankroll_usdc": 50.0}
+    wallet = "0x0000000000000000000000000000000000000001"
+    base: dict[str, object] = {
+        "trading_mode": "paper",
+        "bankroll_usdc": 50.0,
+        "consumer_wallet_address": wallet,
+        "consumer_did": f"did:pkh:eip155:137:{wallet}",
+    }
     base.update(overrides)
     return Settings(**base)
 
@@ -112,8 +118,8 @@ def test_submit_bid_preview_handles_rejection(monkeypatch):
     )
     monkeypatch.setattr("signal_consumer.ws_ingestion.log_auction_event", lambda **_: None)
     settings = _settings(
-        consumer_did="did:kite:test/consumer-a",
-        consumer_wallet_address="0xabc",
+        consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
+        consumer_wallet_address="0x0000000000000000000000000000000000000001",
         consumer_default_bid_amount=2.5,
     )
     async def _fake_bid_decision(*_args, **_kwargs):
@@ -152,7 +158,10 @@ def test_submit_bid_preview_skips_when_llm_says_do_not_bid(monkeypatch):
     result = asyncio.run(
         _submit_bid_for_preview(
             preview_payload,
-            _settings(consumer_did="did:kite:test/consumer-a", consumer_wallet_address="0xabc"),
+            _settings(
+                consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
+                consumer_wallet_address="0x0000000000000000000000000000000000000001",
+            ),
         )
     )
 
@@ -231,10 +240,47 @@ def test_submit_bid_preview_sends_payment_failure_when_x402_fails(monkeypatch):
     result = asyncio.run(
         _submit_bid_for_preview(
             preview_payload,
-            _settings(consumer_did="did:kite:test/consumer-a", consumer_wallet_address="0xabc"),
+            _settings(
+                consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
+                consumer_wallet_address="0x0000000000000000000000000000000000000001",
+            ),
         )
     )
     assert result["action"] == "AuctionNoWinner"
     payment_messages = [m for m in outbound_messages if m.get("type") == "AuctionPaymentResult"]
     assert payment_messages
     assert payment_messages[-1]["payment_success"] is False
+
+
+def test_submit_bid_preview_rejects_when_reputation_insufficient(monkeypatch):
+    preview_payload = {
+        "type": "SignalPreviewMessage",
+        "auction_id": "auction-1",
+        "producer_did": "did:kite:producer/default/weather-v1",
+        "exchanges": [{"event_id": "evt-1", "edge": 0.11}],
+        "last_price_paid": 1.2,
+        "model_probability": 0.6,
+        "confidence": 0.7,
+    }
+    events: list[dict] = []
+
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.is_consumer_reputation_sufficient",
+        lambda _did, threshold=5: False,
+    )
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.log_auction_event",
+        lambda **kwargs: events.append(kwargs),
+    )
+    result = asyncio.run(
+        _submit_bid_for_preview(
+            preview_payload,
+            _settings(
+                consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
+                consumer_wallet_address="0x0000000000000000000000000000000000000001",
+                chain_id=137,
+            ),
+        )
+    )
+    assert result["action"] == "InsufficientReputation"
+    assert any(event.get("outcome") == "insufficient_reputation" for event in events)

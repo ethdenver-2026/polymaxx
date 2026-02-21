@@ -44,9 +44,22 @@ class SignalBroadcaster:
         self._auctions: dict[str, AuctionState] = {}
         self._payment_waiters: dict[tuple[str, str], asyncio.Future[bool]] = {}
         self._auction_timeout_seconds = float(os.getenv("SIGNAL_AUCTION_TIMEOUT_SECONDS", "15"))
-        self._payment_timeout_seconds = float(os.getenv("SIGNAL_AUCTION_PAYMENT_TIMEOUT_SECONDS", "20"))
+        self._payment_timeout_seconds = float(
+            os.getenv("SIGNAL_AUCTION_PAYMENT_TIMEOUT_SECONDS", "20")
+        )
         self._producer_did = os.getenv("PRODUCER_DID", "did:kite:producer/default/weather-v1")
+        self._producer_wallet_address = (
+            os.getenv("PRODUCER_WALLET_ADDRESS", "") or os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+        ).strip().lower()
         self._kite_x402_url = os.getenv("PRODUCER_KITE_X402_URL", "https://x402.dev.gokite.ai/api/weather")
+        self._x402_mode = os.getenv("PRODUCER_X402_MODE", "x402_v2").strip().lower()
+        self._public_base_url = os.getenv("PRODUCER_PUBLIC_BASE_URL", "http://127.0.0.1:8000").strip()
+        self._x402_v2_url = os.getenv("PRODUCER_X402_V2_URL", "").strip()
+        if self._x402_mode not in {"kite", "x402_v2"}:
+            raise RuntimeError(f"Unsupported PRODUCER_X402_MODE: {self._x402_mode}")
+        if self._x402_mode == "x402_v2" and not self._x402_v2_url:
+            # Self-hosted default endpoint for producer-owned x402_v2 flow.
+            self._x402_v2_url = f"{self._public_base_url.rstrip('/')}/x402/v2/payment"
 
     async def connect(self, websocket: WebSocket, consumer_did: str) -> None:
         await websocket.accept()
@@ -86,7 +99,12 @@ class SignalBroadcaster:
             clients=len(self._bid_connections),
         )
 
-    async def _broadcast_payload(self, payload: dict[str, Any], market_id: str, token_id: str) -> None:
+    async def _broadcast_payload(
+        self,
+        payload: dict[str, Any],
+        market_id: str,
+        token_id: str,
+    ) -> None:
         payload["published_at"] = datetime.now(UTC).isoformat()
 
         async with self._connection_lock:
@@ -152,7 +170,11 @@ class SignalBroadcaster:
             "created_at": record.created_at,
             "metadata_json": record.metadata_json,
         }
-        await self._broadcast_payload(_json_safe(payload), market_id=record.market_id, token_id=record.token_id)
+        await self._broadcast_payload(
+            _json_safe(payload),
+            market_id=str(record.market_id),
+            token_id=str(record.token_id),
+        )
 
     async def broadcast_producer_signal(self, signal: ProducerSignal) -> None:
         """Broadcast a signal preview and start auction lifecycle."""
@@ -206,8 +228,8 @@ class SignalBroadcaster:
 
         await self._broadcast_payload(
             payload,
-            market_id=first_exchange.get("event_id", ""),
-            token_id=first_exchange.get("token_id", ""),
+            market_id=str(first_exchange.get("event_id", "")),
+            token_id=str(first_exchange.get("token_id", "")),
         )
         asyncio.create_task(self._close_auction_when_elapsed(auction_id))
 
@@ -274,17 +296,30 @@ class SignalBroadcaster:
         success = payload.get("payment_success")
         if not auction_id or success is None:
             raise RuntimeError("AuctionPaymentResult requires auction_id and payment_success")
-        waiter_key = (auction_id, consumer_did)
-        future = self._payment_waiters.get(waiter_key)
+        future = self._payment_waiters.get((auction_id, consumer_did))
         if future is None:
-            logger.warning(
-                "Received payment result with no waiter",
+            logger.info(
+                "Received payment result with no waiter; likely already resolved by HTTP payment endpoint",
                 auction_id=auction_id,
                 consumer_did=consumer_did,
             )
             return
         if not future.done():
             future.set_result(bool(success))
+
+    def notify_payment_result(self, *, auction_id: str, consumer_did: str, success: bool) -> bool:
+        """Resolve an outstanding payment waiter from an internal HTTP endpoint."""
+        future = self._payment_waiters.get((auction_id, consumer_did))
+        if future is None:
+            logger.warning(
+                "No payment waiter to resolve",
+                auction_id=auction_id,
+                consumer_did=consumer_did,
+            )
+            return False
+        if not future.done():
+            future.set_result(bool(success))
+        return True
 
     async def _close_auction_when_elapsed(self, auction_id: str) -> None:
         async with self._auction_lock:
@@ -328,7 +363,11 @@ class SignalBroadcaster:
                     "auction_id": auction_id,
                     "consumer_did": consumer_did,
                     "bid_amount": bid_amount,
-                    "x402_payment_url": self._kite_x402_url,
+                    "producer_wallet_address": self._producer_wallet_address,
+                    "x402_mode": self._x402_mode,
+                    "x402_payment_url": (
+                        self._x402_v2_url if self._x402_mode == "x402_v2" else self._kite_x402_url
+                    ),
                     "payment_timeout_seconds": self._payment_timeout_seconds,
                     "sent_at": datetime.now(UTC).isoformat(),
                 },
@@ -448,7 +487,11 @@ class SignalBroadcaster:
         async with self._connection_lock:
             websocket = self._bid_connections.get(consumer_did)
         if websocket is None:
-            logger.error("No bid websocket for consumer", consumer_did=consumer_did, payload_type=payload.get("type"))
+            logger.error(
+                "No bid websocket for consumer",
+                consumer_did=consumer_did,
+                payload_type=payload.get("type"),
+            )
             return
         try:
             await websocket.send_json(payload)

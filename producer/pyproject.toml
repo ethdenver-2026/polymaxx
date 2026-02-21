@@ -19,6 +19,7 @@ dependencies = [
 
     # LLM (Venice.ai uses OpenAI-compatible API)
     "openai>=1.50.0",
+    "eth-account>=0.13.5",
 
     # Database
     "sqlalchemy>=2.0.40",

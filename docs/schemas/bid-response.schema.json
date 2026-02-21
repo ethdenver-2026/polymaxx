@@ -135,6 +135,13 @@
           "type": "string",
           "format": "uri"
         },
+        "x402_mode": {
+          "type": "string",
+          "enum": [
+            "kite",
+            "x402_v2"
+          ]
+        },
         "payment_timeout_seconds": {
           "type": "number",
           "exclusiveMinimum": 0

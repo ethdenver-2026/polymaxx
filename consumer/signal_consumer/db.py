@@ -94,14 +94,31 @@ def init_db() -> None:
             raw_message_json    TEXT    NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS consumer_reputation_events (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            received_at         REAL    NOT NULL,
+            consumer_did        TEXT    NOT NULL,
+            auction_id          TEXT,
+            reason              TEXT    NOT NULL,
+            negative_delta      INTEGER NOT NULL
+        )
+    """)
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_auction_id ON consumer_auction_log (auction_id)"
+        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_auction_id "
+        "ON consumer_auction_log (auction_id)"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_received_at ON consumer_auction_log (received_at)"
+        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_received_at "
+        "ON consumer_auction_log (received_at)"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_outcome ON consumer_auction_log (outcome)"
+        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_outcome "
+        "ON consumer_auction_log (outcome)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_consumer_rep_events_consumer_did "
+        "ON consumer_reputation_events (consumer_did)"
     )
     # Idempotent migration: add columns that don't exist yet
     existing_cols = {
@@ -115,6 +132,73 @@ def init_db() -> None:
             )
     conn.commit()
     conn.close()
+
+
+def _normalize_wallet_address(wallet_address: str) -> str:
+    normalized = wallet_address.strip().lower()
+    if not normalized.startswith("0x") or len(normalized) != 42:
+        raise RuntimeError(f"Invalid wallet address format: {wallet_address}")
+    return normalized
+
+
+def derive_consumer_did_pkh(*, chain_id: int, wallet_address: str) -> str:
+    normalized_address = _normalize_wallet_address(wallet_address)
+    return f"did:pkh:eip155:{chain_id}:{normalized_address}"
+
+
+def validate_consumer_did_wallet_binding(
+    *,
+    consumer_did: str,
+    wallet_address: str,
+    chain_id: int,
+) -> str:
+    expected = derive_consumer_did_pkh(chain_id=chain_id, wallet_address=wallet_address)
+    candidate = consumer_did.strip().lower()
+    if candidate and candidate != expected:
+        raise RuntimeError(
+            "Configured consumer_did does not match wallet-bound did:pkh. "
+            f"expected={expected} got={consumer_did}"
+        )
+    return expected
+
+
+def record_consumer_payment_failure(*, consumer_did: str, auction_id: str, reason: str) -> None:
+    now = time.time()
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute(
+        """
+        INSERT INTO consumer_reputation_events
+            (received_at, consumer_did, auction_id, reason, negative_delta)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (now, consumer_did, auction_id, reason, 1),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_consumer_reputation(consumer_did: str) -> dict:
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(negative_delta), 0)
+        FROM consumer_reputation_events
+        WHERE consumer_did = ?
+        """,
+        (consumer_did,),
+    ).fetchone()
+    conn.close()
+    negative_reputation = int(row[0] or 0)
+    return {"consumer_did": consumer_did, "negative_reputation": negative_reputation}
+
+
+def is_consumer_reputation_sufficient(consumer_did: str, threshold: int = 5) -> bool:
+    if threshold <= 0:
+        raise RuntimeError(f"Invalid reputation threshold: {threshold}")
+    rep = get_consumer_reputation(consumer_did)
+    return int(rep["negative_reputation"]) < threshold
 
 
 def log_auction_event(

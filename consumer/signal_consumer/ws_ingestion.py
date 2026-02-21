@@ -14,8 +14,14 @@ from .balances import get_balances
 from .bid_pricing import BidDecision, build_bid_pricing_input, normalize_bid_decision
 from .config import Settings
 from .consumer_engine import process_signal_payload
-from .db import log_auction_event, log_signal
-from .kite_payment import process_auction_payment
+from .db import (
+    is_consumer_reputation_sufficient,
+    log_auction_event,
+    log_signal,
+    record_consumer_payment_failure,
+    validate_consumer_did_wallet_binding,
+)
+from .payment import process_auction_payment
 from .llm_clients import BidLlmRouter
 
 logger = structlog.get_logger()
@@ -53,11 +59,31 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
     exchanges = payload.get("exchanges")
     if isinstance(exchanges, list) and exchanges:
         event_id = exchanges[0].get("event_id")
+    consumer_did = _resolve_consumer_did(settings)
+    if settings.reputation_storage_backend == "0g_stub" and settings.reputation_0g_enabled:
+        logger.warning(
+            "0g reputation backend requested but not implemented; using local_db",
+            consumer_did=consumer_did,
+        )
+    if not is_consumer_reputation_sufficient(consumer_did, threshold=5):
+        log_auction_event(
+            auction_id=auction_id,
+            consumer_did=consumer_did,
+            producer_did=producer_did,
+            event_id=event_id,
+            bid_amount=0.0,
+            auction_end_utc=payload.get("auction_end_utc"),
+            outcome="insufficient_reputation",
+            metadata={"reason": "InsufficientReputation", "threshold": 5},
+            raw_message={"type": "InsufficientReputation", "auction_id": auction_id},
+        )
+        return {"action": "InsufficientReputation", "errors": ["InsufficientReputation"]}
+
     decision = await determine_bid_for_preview(payload, settings)
     if not decision.should_bid:
         log_auction_event(
             auction_id=auction_id,
-            consumer_did=settings.consumer_did,
+            consumer_did=consumer_did,
             producer_did=producer_did,
             event_id=event_id,
             bid_amount=0.0,
@@ -77,18 +103,18 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
         return {"action": "bid_skipped", "errors": []}
 
     bid_amount = decision.bid_amount
-    bid_url = f"{settings.producer_bid_ws_url}?{urlencode({'consumer_did': settings.consumer_did})}"
+    bid_url = f"{settings.producer_bid_ws_url}?{urlencode({'consumer_did': consumer_did})}"
     bid_message = {
         "type": "AuctionBidMessage",
         "version": 1,
         "auction_id": auction_id,
-        "consumer_did": settings.consumer_did,
+        "consumer_did": consumer_did,
         "wallet_address": settings.consumer_wallet_address,
         "bid_amount": bid_amount,
     }
     log_auction_event(
         auction_id=auction_id,
-        consumer_did=settings.consumer_did,
+        consumer_did=consumer_did,
         producer_did=producer_did,
         event_id=event_id,
         bid_amount=bid_amount,
@@ -103,7 +129,7 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
     logger.info(
         "Submitting auction bid",
         auction_id=auction_id,
-        consumer_did=settings.consumer_did,
+        consumer_did=consumer_did,
         bid_amount=bid_amount,
     )
     async with websockets.connect(bid_url) as bid_ws:
@@ -119,7 +145,7 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
             if response_type in {"AuctionBidRejected", "AuctionLossNotice", "AuctionNoWinner"}:
                 log_auction_event(
                     auction_id=auction_id,
-                    consumer_did=settings.consumer_did,
+                    consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
                     bid_amount=bid_amount,
@@ -139,7 +165,7 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
             if response_type == "AuctionWinNotice":
                 log_auction_event(
                     auction_id=auction_id,
-                    consumer_did=settings.consumer_did,
+                    consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
                     bid_amount=bid_response.get("bid_amount"),
@@ -151,11 +177,12 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     "type": "AuctionPaymentResult",
                     "version": 1,
                     "auction_id": auction_id,
-                    "consumer_did": settings.consumer_did,
+                    "consumer_did": consumer_did,
                     "payment_success": _execute_payment_for_win_notice(
                         bid_response=bid_response,
                         auction_id=auction_id,
                         settings=settings,
+                        consumer_did=consumer_did,
                     ),
                 }
                 await bid_ws.send(json.dumps(payment_result))
@@ -164,7 +191,7 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
             if response_type == "AuctionPaymentStatus":
                 log_auction_event(
                     auction_id=auction_id,
-                    consumer_did=settings.consumer_did,
+                    consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
                     bid_amount=bid_amount,
@@ -224,29 +251,71 @@ def _execute_payment_for_win_notice(
     bid_response: dict,
     auction_id: str,
     settings: Settings,
+    consumer_did: str,
 ) -> bool:
     payment_url = str(bid_response.get("x402_payment_url", "")).strip()
     bid_amount = float(bid_response.get("bid_amount", 0.0))
+    selected_mode = (
+        str(bid_response.get("x402_mode", settings.x402_mode)).strip()
+        or settings.x402_mode
+    )
     try:
-        return process_auction_payment(
+        success = process_auction_payment(
             auction_id=auction_id,
-            consumer_did=settings.consumer_did,
+            consumer_did=consumer_did,
+            wallet_address=settings.consumer_wallet_address,
+            producer_wallet_address=str(bid_response.get("producer_wallet_address", "")).strip(),
             x402_payment_url=payment_url,
             bid_amount=bid_amount,
+            x402_mode=selected_mode,
             kite_session_url=settings.kite_session_url,
             kite_api_key=settings.kite_api_key,
-            timeout_seconds=settings.kite_payment_timeout_seconds,
+            x402_v2_network=settings.x402_v2_network,
+            x402_v2_asset=settings.x402_v2_asset,
+            x402_v2_chain_id=settings.x402_v2_chain_id,
+            x402_v2_rpc_url=settings.x402_v2_rpc_url,
+            x402_v2_token_address=settings.x402_v2_token_address,
+            x402_v2_token_decimals=settings.x402_v2_token_decimals,
+            siwx_challenge_url=settings.siwx_challenge_url,
+            siwx_auth_url=settings.siwx_auth_url,
+            siwx_app_id=settings.siwx_app_id,
+            siwx_wallet_private_key=settings.siwx_wallet_private_key,
+            timeout_seconds=(
+                settings.x402_v2_timeout_seconds
+                if selected_mode == "x402_v2"
+                else settings.kite_payment_timeout_seconds
+            ),
         )
+        if not success:
+            record_consumer_payment_failure(
+                consumer_did=consumer_did,
+                auction_id=auction_id,
+                reason="payment_failed",
+            )
+        return success
     except Exception as exc:
         logger.exception(
             "Auction payment execution failed",
             auction_id=auction_id,
-            consumer_did=settings.consumer_did,
+            consumer_did=consumer_did,
             payment_url=payment_url,
             bid_amount=bid_amount,
             error=str(exc),
         )
+        record_consumer_payment_failure(
+            consumer_did=consumer_did,
+            auction_id=auction_id,
+            reason=f"payment_exception:{exc}",
+        )
         return False
+
+
+def _resolve_consumer_did(settings: Settings) -> str:
+    return validate_consumer_did_wallet_binding(
+        consumer_did=settings.consumer_did,
+        wallet_address=settings.consumer_wallet_address,
+        chain_id=settings.chain_id,
+    )
 
 
 async def consume_producer_signals(settings: Settings) -> None:
