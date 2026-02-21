@@ -83,3 +83,10 @@ dashboard/dist/
 tmp/
 
 research_data/
+
+# Terraform local state/cache
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/.terraform.tfstate.lock.info
+*.tfplan
