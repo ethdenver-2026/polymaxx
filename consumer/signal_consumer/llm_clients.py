@@ -54,19 +54,6 @@ def _prompt_for_context(context: BidPricingInput) -> str:
     )
 
 
-class MockBidClient:
-    """Formula-based bid pricing — no LLM needed."""
-
-    async def decide_bid(self, context: BidPricingInput) -> BidDecision:
-        bid = abs(context.edge) * context.confidence * 1.0
-        bid = round(max(0.01, min(5.0, bid)), 4)
-        return BidDecision(
-            should_bid=True,
-            bid_amount=bid,
-            rationale="mock: edge * confidence",
-        )
-
-
 class AnthropicBidClient:
     def __init__(
         self,
@@ -157,9 +144,6 @@ class BidLlmRouter:
         g0_client: BidLlmClient | None = None,
     ) -> None:
         self._provider = provider
-        if provider == "mock":
-            self._client = MockBidClient()
-            return
         if provider == "anthropic":
             self._client = anthropic_client or AnthropicBidClient(
                 api_key=anthropic_api_key,

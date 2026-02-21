@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     payment_wallet_private_key: str = Field(default="")
     consumer_bid_timeout_seconds: float = Field(default=25.0, ge=1.0)
     consumer_payment_auto_succeeds: bool = Field(default=True)
-    bid_llm_provider: Literal["mock", "anthropic", "g0"] = Field(default="g0")
+    bid_llm_provider: Literal["anthropic", "g0"] = Field(default="g0")
     bid_llm_temperature: float = Field(default=0.8, ge=0.0, le=1.0)
     bid_llm_max_bid_amount_usdc: float = Field(default=5.0, gt=0.0)
     bid_llm_request_timeout_seconds: float = Field(default=20.0, ge=1.0)
