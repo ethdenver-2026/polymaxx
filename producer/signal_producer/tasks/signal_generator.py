@@ -282,8 +282,8 @@ class SignalGeneratorTask:
     def _build_preview(self, signal: ProducerSignal) -> ProducerSignalPreview:
         """Build a ProducerSignalPreview from a full ProducerSignal.
 
-        Strips market details (token_id, side, market_price, market_description,
-        resolution_source) — only includes event_id and edge.
+        Strips market details (token_id, side, market_price, market_question,
+        market_group_item_title, resolution_source) — only includes event_id and edge.
         """
         preview_exchanges: list[PreviewPolymarketInfo] = []
         for ex in signal.exchanges:

@@ -31,17 +31,19 @@ def test_consumer_receives_canonical_producer_signal_payload(monkeypatch):
                 PolymarketInfo(
                     exchange="polymarket",
                     event_id="event-123",
+                    event_title="Highest temperature in NYC on February 20?",
+                    resolution_source="https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA",
+                    market_question="Will the highest temperature be 46-47°F?",
+                    market_group_item_title="46-47°F",
                     token_id="token-abc",
                     side="yes",
-                    market_description="Will the highest temperature be 46-47°F?",
-                    resolution_source="https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA",
                     market_price=0.55,
                     edge=0.15,
                     price_timestamp="2026-02-20T01:02:03",
                 ),
             ],
         )
-        await ws_server.broadcaster.broadcast_producer_signal(signal)
+        await ws_server._active_broadcaster.broadcast_producer_signal(signal)
         return [signal]
 
     monkeypatch.setattr(ws_server, "run_once", fake_run_once)
@@ -72,7 +74,7 @@ def test_siwx_challenge_auth_and_payment_endpoint(monkeypatch):
     app_id = "demo-app"
     auction_id = "auc-123"
     monkeypatch.setattr(
-        ws_server.broadcaster,
+        ws_server._active_broadcaster,
         "notify_payment_result",
         lambda *, auction_id, consumer_did, success: True,
     )
@@ -147,7 +149,7 @@ def test_x402_payment_rejects_invalid_token(monkeypatch):
     ws_server._SIWX_TOKENS.clear()
     ws_server._CONSUMED_TX_HASHES.clear()
     monkeypatch.setattr(
-        ws_server.broadcaster,
+        ws_server._active_broadcaster,
         "notify_payment_result",
         lambda *, auction_id, consumer_did, success: True,
     )
@@ -196,7 +198,7 @@ def test_x402_payment_rejects_replayed_tx_hash(monkeypatch):
     monkeypatch.setenv("PRODUCER_X402_TOKEN_ADDRESS", "0x3333333333333333333333333333333333333333")
     monkeypatch.setattr(ws_server, "_verify_onchain_payment", lambda **_: None)
     monkeypatch.setattr(
-        ws_server.broadcaster,
+        ws_server._active_broadcaster,
         "notify_payment_result",
         lambda *, auction_id, consumer_did, success: True,
     )

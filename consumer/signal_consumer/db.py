@@ -413,9 +413,10 @@ def get_signals(limit: int = 100) -> list[dict]:
         exchange = signal.get("exchanges", [{}])[0] if signal.get("exchanges") else {}
         metadata = signal.get("metadata", {})
 
-        # Build description from market_description or legacy description field
+        # Build description from market_question/event_title or legacy description field
         description = (
-            exchange.get("market_description")
+            exchange.get("market_question")
+            or exchange.get("event_title")
             or signal.get("description", "")
         )
 
