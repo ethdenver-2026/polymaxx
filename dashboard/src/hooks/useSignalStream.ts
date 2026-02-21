@@ -14,10 +14,12 @@ export function useSignalStream() {
 
     es.onmessage = () => {
       // A new signal was logged — invalidate stale caches immediately
+      console.log("help")
       queryClient.invalidateQueries({ queryKey: ["signals"] });
       queryClient.invalidateQueries({ queryKey: ["balances"] });
       queryClient.invalidateQueries({ queryKey: ["positions"] });
       queryClient.invalidateQueries({ queryKey: ["portfolioValue"] });
+      queryClient.invalidateQueries({ queryKey: ["trades"] });
     };
 
     es.onerror = () => {

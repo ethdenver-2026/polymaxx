@@ -21,7 +21,8 @@ import structlog
 
 from .balances import get_balances
 from .config import get_settings, get_trading_mode, set_trading_mode
-from .db import get_auction_events, get_paper_positions, get_signals, subscribe, unsubscribe
+from .db import get_auction_events, get_trades, log_auction_event, log_trade, get_paper_positions, get_signals, log_signal, subscribe, unsubscribe
+from .signal_generator import generate_signal
 
 logger = structlog.get_logger()
 
@@ -133,3 +134,89 @@ def paper_positions():
     return get_paper_positions()
 
 
+@app.get("/api/trades")
+def trades(limit: int = 100, status: str | None = None, trade_type: str | None = None):
+    return get_trades(limit=limit, status=status, trade_type=trade_type)
+
+
+class GenerateSignalRequest(BaseModel):
+    cities: list[str] | None = None
+
+
+@app.post("/api/generate-signal")
+async def generate_signal_endpoint(body: GenerateSignalRequest | None = None):
+    """Generate signals — tries producer first, falls back to local generator."""
+    cities = body.cities if body and body.cities else ["nyc", "chicago"]
+
+    # --- Try producer first ---
+    s = get_settings()
+    producer_http = s.producer_ws_url.replace("ws://", "http://").replace("wss://", "https://")
+    producer_http = producer_http.split("/ws/")[0]
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{producer_http}/run-once",
+                params={"cities": ",".join(cities)},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return {
+            "ok": True,
+            "signals_found": data.get("signals_found", 0),
+            "source": "producer",
+            "errors": [],
+        }
+    except (httpx.ConnectError, httpx.HTTPStatusError):
+        logger.info("Producer unreachable, falling back to local generator", cities=cities)
+
+    # --- Fallback: local signal generator per city ---
+    total_logged = 0
+    all_errors: list[str] = []
+
+    for city in cities:
+        try:
+            result = await generate_signal(city_slug=city)
+        except Exception as exc:
+            all_errors.append(f"{city}:{exc}")
+            continue
+
+        signal_data = result["signal_data"]
+        response = result["response"]
+
+        # Always log so every attempt shows in the signal feed
+        log_signal(signal_data, response)
+        total_logged += 1
+
+        # Record trade for simulated signals
+        if response.get("action") == "simulated":
+            exchange = signal_data.get("exchanges", [{}])[0] if signal_data.get("exchanges") else {}
+            metadata = signal_data.get("metadata", {})
+            try:
+                log_trade(
+                    trade_type="paper",
+                    token_id=exchange.get("token_id") or signal_data.get("token_id", ""),
+                    side=exchange.get("side", "buy"),
+                    entry_price=response.get("live_price") or response.get("signal_price"),
+                    size_usd=signal_data.get("position_size_usd"),
+                    model_probability=signal_data.get("model_probability"),
+                    signal_edge=response.get("signal_edge"),
+                    live_edge=response.get("live_edge"),
+                    event_id=exchange.get("event_id"),
+                    event_title=exchange.get("event_title"),
+                    market_description=exchange.get("market_question") or exchange.get("market_description"),
+                    city=metadata.get("city"),
+                    target_date=metadata.get("target_date"),
+                )
+            except Exception:
+                logger.exception("Failed to log paper trade from local generator")
+
+        if response.get("errors"):
+            all_errors.extend(f"{city}:{e}" for e in response["errors"])
+
+    return {
+        "ok": total_logged > 0,
+        "signals_found": total_logged,
+        "source": "local",
+        "errors": all_errors,
+    }

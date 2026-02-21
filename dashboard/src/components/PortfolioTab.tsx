@@ -7,6 +7,7 @@ import {
   useConfig,
   useSetTradingMode,
   usePaperPositions,
+  useTrades,
 } from "@/hooks/queries";
 import { PnLChart } from "./PnLChart";
 
@@ -54,6 +55,7 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
 
   const isLive = config?.trading_mode === "live";
   const { data: paperPositions } = usePaperPositions(!isLive);
+  const { data: trades } = useTrades();
 
   // Paper-mode aggregates
   const paperTotalNotional = paperPositions?.reduce((s, p) => s + (p.size_usd ?? 0), 0) ?? 0;
@@ -254,57 +256,86 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
               </>
             )
           ) : (
-            /* ---- PAPER positions table ---- */
-            !paperPositions || paperPositions.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                No paper positions yet
-              </div>
-            ) : (
-              <>
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-[#1e2235]">
-                      <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Market</th>
-                      <th className="text-center px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Side</th>
-                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Size</th>
-                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Entry</th>
-                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Model P</th>
-                      <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Edge</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paperPositions.slice(0, 8).map((p, i) => (
-                      <tr
-                        key={`${p.token_id}-${i}`}
-                        className="border-b border-[#1e2235]/30 hover:bg-[#4ade8008] transition-colors"
-                      >
-                        <td className="px-4 py-2 max-w-[240px] truncate">{p.description || p.token_id.slice(0, 20) + "..."}</td>
-                        <td className="px-3 py-2 text-center">
-                          <span className={`text-[10px] font-semibold uppercase ${
-                            p.side === "buy" ? "text-signal-green" : "text-signal-red"
-                          }`}>
-                            {p.side}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right num">${(p.size_usd ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-right num text-muted-foreground">{((p.entry_price ?? 0) * 100).toFixed(1)}¢</td>
-                        <td className="px-3 py-2 text-right num">{((p.model_probability ?? 0) * 100).toFixed(1)}%</td>
-                        <td className={`px-4 py-2 text-right font-semibold num ${
-                          (p.edge ?? 0) > 0 ? "text-signal-green" : "text-muted-foreground"
-                        }`}>
-                          {((p.edge ?? 0) * 100).toFixed(1)}%
-                        </td>
+            /* ---- TRADES table (paper mode) ---- */
+            (() => {
+              const paperTrades = trades?.filter((t) => t.trade_type === "paper") ?? [];
+              return paperTrades.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                  No paper trades &mdash; generate a signal to start
+                </div>
+              ) : (
+                <>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-[#1e2235]">
+                        <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Market</th>
+                        <th className="text-center px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">City</th>
+                        <th className="text-center px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Side</th>
+                        <th className="text-right px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Size</th>
+                        <th className="text-right px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Entry</th>
+                        <th className="text-right px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Edge</th>
+                        <th className="text-center px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Status</th>
+                        <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Time</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {paperPositions.length > 8 && (
-                  <div className="px-4 py-2 text-[10px] text-muted-foreground text-center border-t border-[#1e2235]/30">
-                    +{paperPositions.length - 8} more positions
-                  </div>
-                )}
-              </>
-            )
+                    </thead>
+                    <tbody>
+                      {paperTrades.slice(0, 8).map((t) => {
+                        const edge = t.live_edge ?? t.signal_edge ?? 0;
+                        return (
+                          <tr
+                            key={t.id}
+                            className="border-b border-[#1e2235]/30 hover:bg-[#4ade8008] transition-colors"
+                          >
+                            <td className="px-4 py-2 max-w-[200px] truncate">
+                              {t.market_description || t.event_title || t.token_id.slice(0, 20) + "..."}
+                            </td>
+                            <td className="px-2 py-2 text-center text-muted-foreground">
+                              {t.city ?? "---"}
+                            </td>
+                            <td className="px-2 py-2 text-center">
+                              <span className={`text-[10px] font-semibold uppercase ${
+                                t.side === "buy" ? "text-signal-green" : "text-signal-red"
+                              }`}>
+                                {t.side}
+                              </span>
+                            </td>
+                            <td className="px-2 py-2 text-right num">${(t.size_usd ?? 0).toFixed(2)}</td>
+                            <td className="px-2 py-2 text-right num text-muted-foreground">{((t.entry_price ?? 0) * 100).toFixed(1)}¢</td>
+                            <td className={`px-2 py-2 text-right font-semibold num ${
+                              edge > 0 ? "text-signal-green" : "text-muted-foreground"
+                            }`}>
+                              {(edge * 100).toFixed(1)}%
+                            </td>
+                            <td className="px-2 py-2 text-center">
+                              <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold ${
+                                t.status === "open"
+                                  ? "bg-signal-green/15 text-signal-green border-signal-green/30"
+                                  : t.status === "closed"
+                                    ? "bg-blue-500/15 text-blue-400 border-blue-500/30"
+                                    : "bg-signal-red/15 text-signal-red border-signal-red/30"
+                              }`}>
+                                {t.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 text-right num text-muted-foreground text-[10px]">
+                              {new Date(t.created_at * 1000).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {paperTrades.length > 8 && (
+                    <div className="px-4 py-2 text-[10px] text-muted-foreground text-center border-t border-[#1e2235]/30">
+                      +{paperTrades.length - 8} more trades
+                    </div>
+                  )}
+                </>
+              );
+            })()
           )}
         </div>
 

@@ -92,25 +92,21 @@ function StrategyChecks({ checks }: { checks: StrategyCheckData[] }) {
   );
 }
 
-/** Extract event-level title from a bucket description.
- *  "Will the highest temperature in Atlanta be 62°F or higher on February 22?"
- *  -> "Highest temp in Atlanta, Feb 22"
- */
-function extractEventTitle(description: string, city: string | null): string {
-  const match = description.match(/highest temperature in (.+?) (?:be .+? )?on (.+?)\?/i);
+function getEventTitle(s: ConsumerSignal): string {
+  if (s.event_title) return s.event_title;
+  // Fallback: parse from description
+  const match = s.description.match(/highest temperature in (.+?) (?:be .+? )?on (.+?)\?/i);
   if (match) return `Highest temp in ${match[1]}, ${match[2]}`;
-  if (city) return `Weather signal — ${city}`;
-  return description;
+  if (s.city) return `Weather signal — ${s.city}`;
+  return s.description;
 }
 
-/** Extract just the bucket part from a full description.
- *  "Will the highest temperature in Atlanta be 62°F or higher on February 22?"
- *  -> "62°F or higher"
- */
-function extractBucket(description: string): string {
-  const match = description.match(/be ((?:between )?\d+.*?)(?:\s+on\s)/i);
+function getMarketLabel(s: ConsumerSignal): string {
+  if (s.market_group_item_title) return s.market_group_item_title;
+  // Fallback: parse bucket from description
+  const match = s.description.match(/be ((?:between )?\d+.*?)(?:\s+on\s)/i);
   if (match) return match[1];
-  return description;
+  return "";
 }
 
 interface EventGroup {
@@ -144,7 +140,7 @@ function groupSignalsByEvent(signals: ConsumerSignal[]): EventGroup[] {
 
     const title = key.startsWith("_solo_")
       ? bestSignal.description
-      : extractEventTitle(bestSignal.description, bestSignal.city);
+      : getEventTitle(bestSignal);
 
     const received_at = Math.min(...groupSignals.map((s) => s.received_at));
 
@@ -155,7 +151,7 @@ function groupSignalsByEvent(signals: ConsumerSignal[]): EventGroup[] {
   return result;
 }
 
-const COL_COUNT = 7;
+const COL_COUNT = 8;
 
 export function SignalsTab() {
   const { data: signals, isLoading } = useSignals();
@@ -208,6 +204,7 @@ export function SignalsTab() {
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold w-6"></th>
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Time</th>
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Event</th>
+              <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Market</th>
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Edge</th>
               <th className="text-right px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Bid</th>
               <th className="text-left px-4 py-2.5 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Outcome</th>
@@ -241,9 +238,12 @@ export function SignalsTab() {
                       <div className="font-medium">{group.title}</div>
                       {!isSolo && (
                         <div className="text-[10px] text-muted-foreground/60 mt-0.5">
-                          Best: {extractBucket(s.description)} &middot; {group.bucketCount} buckets
+                          {group.bucketCount} buckets
                         </div>
                       )}
+                    </td>
+                    <td className="px-4 py-2.5 text-muted-foreground">
+                      {getMarketLabel(s) || "---"}
                     </td>
                     <td className="px-4 py-2.5">
                       <EdgeBar edge={s.signal_edge} />

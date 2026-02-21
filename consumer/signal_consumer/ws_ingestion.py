@@ -14,7 +14,7 @@ import websockets
 from .balances import get_balances, get_payment_usdc_balance
 from .bid_pricing import BidDecision, build_bid_pricing_input, normalize_bid_decision
 from .config import Settings
-from .consumer_engine import process_signal_payload
+from .consumer_engine import get_available_balance_usdc, process_signal_payload
 from .db import (
     create_signal_lifecycle,
     get_signal_id_for_auction_id,
@@ -88,9 +88,13 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
         raise RuntimeError("SignalPreviewMessage missing auction_id")
     producer_did = payload.get("producer_did")
     event_id = None
+    event_title = None
+    market_group_item_title = None
     exchanges = payload.get("exchanges")
     if isinstance(exchanges, list) and exchanges:
         event_id = exchanges[0].get("event_id")
+        event_title = exchanges[0].get("event_title")
+        market_group_item_title = exchanges[0].get("market_group_item_title")
     consumer_did = _resolve_consumer_did(settings)
 
     signal_id = _resolve_signal_id(auction_id, consumer_did)
@@ -135,6 +139,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
             consumer_did=consumer_did,
             producer_did=producer_did,
             event_id=event_id,
+            event_title=event_title,
+            market_group_item_title=market_group_item_title,
             bid_amount=0.0,
             auction_end_utc=payload.get("auction_end_utc"),
             outcome="insufficient_reputation",
@@ -153,12 +159,24 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
         return {"action": "InsufficientReputation", "errors": ["InsufficientReputation"]}
 
     decision = await determine_bid_for_preview(payload, settings)
+
+    # Log a signal entry so the signals page can join with auction data
+    _first_ex = exchanges[0] if isinstance(exchanges, list) and exchanges else {}
+    _preview_response = {
+        "action": "bid_submitted" if decision.should_bid else "bid_skipped",
+        "signal_price": _first_ex.get("market_price"),
+        "signal_edge": _first_ex.get("edge"),
+    }
+    log_signal(payload, _preview_response, auction_id=auction_id)
+
     if not decision.should_bid:
         log_auction_event(
             auction_id=auction_id,
             consumer_did=consumer_did,
             producer_did=producer_did,
             event_id=event_id,
+            event_title=event_title,
+            market_group_item_title=market_group_item_title,
             bid_amount=0.0,
             auction_end_utc=payload.get("auction_end_utc"),
             outcome="bid_skipped",
@@ -199,6 +217,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
         consumer_did=consumer_did,
         producer_did=producer_did,
         event_id=event_id,
+        event_title=event_title,
+        market_group_item_title=market_group_item_title,
         bid_amount=bid_amount,
         auction_end_utc=payload.get("auction_end_utc"),
         outcome="bid_submitted",
@@ -238,6 +258,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
+                    event_title=event_title,
+                    market_group_item_title=market_group_item_title,
                     bid_amount=bid_amount,
                     outcome=response_type,
                     rejection_reason=bid_response.get("reason"),
@@ -276,6 +298,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
+                    event_title=event_title,
+                    market_group_item_title=market_group_item_title,
                     bid_amount=bid_response.get("bid_amount"),
                     outcome="won_offer",
                     payment_url=bid_response.get("x402_payment_url"),
@@ -311,6 +335,8 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
                     consumer_did=consumer_did,
                     producer_did=producer_did,
                     event_id=event_id,
+                    event_title=event_title,
+                    market_group_item_title=market_group_item_title,
                     bid_amount=bid_amount,
                     outcome=normalized_status,
                     raw_message=bid_response,
@@ -362,32 +388,37 @@ async def _submit_bid_for_preview(payload: dict, settings: Settings) -> dict:
 
 
 async def determine_bid_for_preview(payload: dict, settings: Settings) -> BidDecision:
-    balances = get_balances(
-        private_key=settings.trading_wallet_private_key,
-        wallet_address=settings.trading_wallet_address,
-    )
-    if balances.onchain_pol < settings.min_polygon_pol_for_bidding:
-        rationale = (
-            "insufficient_polygon_pol: "
-            f"have={balances.onchain_pol:.8f}, "
-            f"required={settings.min_polygon_pol_for_bidding:.8f}"
+    if settings.trading_mode == "paper":
+        balance_usdc = get_available_balance_usdc(settings)
+        balances = None
+        payment_usdc = balance_usdc
+    else:
+        balances = get_balances(
+            private_key=settings.trading_wallet_private_key,
+            wallet_address=settings.trading_wallet_address,
         )
-        logger.info(
-            "Skipping bid due to low Polygon gas balance",
-            auction_id=payload.get("auction_id"),
-            trading_wallet_address=settings.trading_wallet_address,
-            onchain_pol=balances.onchain_pol,
-            min_polygon_pol_for_bidding=settings.min_polygon_pol_for_bidding,
-        )
-        return BidDecision(should_bid=False, bid_amount=0.0, rationale=rationale)
+        if balances.onchain_pol < settings.min_polygon_pol_for_bidding:
+            rationale = (
+                "insufficient_polygon_pol: "
+                f"have={balances.onchain_pol:.8f}, "
+                f"required={settings.min_polygon_pol_for_bidding:.8f}"
+            )
+            logger.info(
+                "Skipping bid due to low Polygon gas balance",
+                auction_id=payload.get("auction_id"),
+                trading_wallet_address=settings.trading_wallet_address,
+                onchain_pol=balances.onchain_pol,
+                min_polygon_pol_for_bidding=settings.min_polygon_pol_for_bidding,
+            )
+            return BidDecision(should_bid=False, bid_amount=0.0, rationale=rationale)
 
-    payment_usdc = get_payment_usdc_balance(
-        wallet_address=settings.payment_wallet_address,
-        rpc_url=settings.x402_v2_rpc_url,
-        token_address=settings.x402_v2_token_address,
-        token_decimals=settings.x402_v2_token_decimals,
-    )
-    balance_usdc = payment_usdc
+        payment_usdc = get_payment_usdc_balance(
+            wallet_address=settings.payment_wallet_address,
+            rpc_url=settings.x402_v2_rpc_url,
+            token_address=settings.x402_v2_token_address,
+            token_decimals=settings.x402_v2_token_decimals,
+        )
+        balance_usdc = payment_usdc
     context = build_bid_pricing_input(
         preview_payload=payload,
         balance_usdc=balance_usdc,
@@ -413,8 +444,8 @@ async def determine_bid_for_preview(payload: dict, settings: Settings) -> BidDec
         "Bid decision generated",
         auction_id=context.auction_id,
         provider=settings.bid_llm_provider,
-        polymarket_usdc=balances.polymarket_usdc,
-        polygon_onchain_usdc_e=balances.onchain_usdc,
+        polymarket_usdc=balances.polymarket_usdc if balances else None,
+        polygon_onchain_usdc_e=balances.onchain_usdc if balances else None,
         payment_usdc=payment_usdc,
         context=asdict(context),
         decision=asdict(normalized),
@@ -521,7 +552,14 @@ async def consume_producer_signals(settings: Settings) -> None:
                     payload = json.loads(message)
                     message_type = payload.get("type")
                     if message_type == "SignalPreviewMessage":
-                        await _submit_bid_for_preview(payload, settings)
+                        try:
+                            await _submit_bid_for_preview(payload, settings)
+                        except Exception as bid_exc:
+                            logger.exception(
+                                "Failed to process SignalPreviewMessage",
+                                auction_id=payload.get("auction_id"),
+                                error=str(bid_exc),
+                            )
                         continue
                     if message_type == "AuctionResultBroadcast":
                         auction_id = payload.get("auction_id", "unknown")

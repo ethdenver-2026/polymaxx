@@ -75,12 +75,14 @@ class AnthropicBidClient:
 
     async def decide_bid(self, context: BidPricingInput) -> BidDecision:
         prompt = _prompt_for_context(context)
+        console.log(prompt)
         response = await self._client.messages.create(
             model=self._model,
             max_tokens=300,
             temperature=self._temperature,
             messages=[{"role": "user", "content": prompt}],
         )
+        console.log(response)
         blocks = getattr(response, "content", [])
         if not blocks:
             raise RuntimeError("Anthropic returned empty content for bid decision")
