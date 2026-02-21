@@ -45,13 +45,37 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
   const recentSignals = signals?.filter((s) => s.received_at > dayAgo) ?? [];
   const executed24h = recentSignals.filter((s) => s.action === "executed").length;
   const skipped24h = recentSignals.filter((s) => s.action === "skipped").length;
-  const hitRate = recentSignals.length > 0
-    ? ((executed24h / recentSignals.length) * 100).toFixed(0)
+  const hintAuctionIds = new Set(
+    recentSignals
+      .map((s) => s.auction_id)
+      .filter((auctionId): auctionId is string => Boolean(auctionId)),
+  );
+  const bidAuctionIds = new Set(
+    recentSignals
+      .filter((s) => {
+        if (s.bid_amount != null && s.bid_amount > 0) return true;
+        return s.state === "bid_submitted";
+      })
+      .map((s) => s.auction_id)
+      .filter((auctionId): auctionId is string => Boolean(auctionId)),
+  );
+  const hitRate = hintAuctionIds.size > 0
+    ? ((bidAuctionIds.size / hintAuctionIds.size) * 100).toFixed(0)
     : "---";
 
-  // Win rate from positions
-  const winCount = positions?.filter((p) => (p.cashPnl ?? 0) > 0).length ?? 0;
-  const winRate = openCount > 0 ? ((winCount / openCount) * 100).toFixed(0) : "---";
+  // Win rate from auction fills: bids placed vs bids that won/finalized with signal delivery.
+  const filledAuctionIds = new Set(
+    recentSignals
+      .filter((s) => {
+        if (s.state === "auction_winner_confirmed") return true;
+        if (s.action === "simulated" || s.action === "executed") return true;
+        return s.auction_outcome === "auction_winner_confirmed";
+      })
+      .map((s) => s.auction_id)
+      .filter((auctionId): auctionId is string => Boolean(auctionId)),
+  );
+  const winCount = filledAuctionIds.size;
+  const winRate = bidAuctionIds.size > 0 ? ((winCount / bidAuctionIds.size) * 100).toFixed(0) : "---";
 
   const isLive = config?.trading_mode === "live";
   const { data: paperPositions } = usePaperPositions(!isLive);
@@ -149,7 +173,7 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
         <MetricCell
           label="Win Rate"
           value={winRate === "---" ? winRate : `${winRate}%`}
-          sub={`${winCount}/${openCount} positions`}
+          sub={`${winCount}/${bidAuctionIds.size} bids filled`}
         />
         <MetricCell
           label="24h Signals"
@@ -159,7 +183,7 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
         <MetricCell
           label="Execution Rate"
           value={hitRate === "---" ? hitRate : `${hitRate}%`}
-          sub="of signals received"
+          sub={`${bidAuctionIds.size}/${hintAuctionIds.size || 0} hints bid`}
         />
         <div className="bg-[#0c0e14] px-4 py-3">
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">

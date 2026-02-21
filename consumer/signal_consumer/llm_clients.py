@@ -6,7 +6,11 @@ import json
 from dataclasses import asdict
 from typing import Protocol
 
+import structlog
+
 from .bid_pricing import BidDecision, BidPricingInput
+
+logger = structlog.get_logger()
 
 
 class BidLlmClient(Protocol):
@@ -75,14 +79,14 @@ class AnthropicBidClient:
 
     async def decide_bid(self, context: BidPricingInput) -> BidDecision:
         prompt = _prompt_for_context(context)
-        console.log(prompt)
+        logger.debug("Submitting Anthropic bid prompt", prompt=prompt)
         response = await self._client.messages.create(
             model=self._model,
             max_tokens=300,
             temperature=self._temperature,
             messages=[{"role": "user", "content": prompt}],
         )
-        console.log(response)
+        logger.debug("Received Anthropic bid response", response=str(response))
         blocks = getattr(response, "content", [])
         if not blocks:
             raise RuntimeError("Anthropic returned empty content for bid decision")
