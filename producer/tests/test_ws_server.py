@@ -7,7 +7,20 @@ from eth_account.messages import encode_defunct
 import time
 
 import signal_producer.ws_server as ws_server
+from signal_producer.publishing.websocket_signal_broadcaster import SignalBroadcaster
 from signal_schema import ProducerSignal, WeatherMetadata, PolymarketInfo
+
+_TEST_WALLET = "0x1234567890abcdef1234567890abcdef12345678"
+
+
+@pytest.fixture(autouse=True)
+def _setup_broadcaster(monkeypatch):
+    """Create a test broadcaster and install it before each test."""
+    monkeypatch.setenv("PRODUCER_WALLET_ADDRESS", _TEST_WALLET)
+    b = SignalBroadcaster()
+    ws_server.set_broadcaster(b)
+    yield b
+    ws_server._active_broadcaster = None
 
 
 def test_consumer_receives_canonical_producer_signal_payload(monkeypatch):
@@ -43,7 +56,7 @@ def test_consumer_receives_canonical_producer_signal_payload(monkeypatch):
                 ),
             ],
         )
-        await ws_server._active_broadcaster.broadcast_producer_signal(signal)
+        await ws_server._get_broadcaster().broadcast_producer_signal(signal)
         return [signal]
 
     monkeypatch.setattr(ws_server, "run_once", fake_run_once)
@@ -74,7 +87,7 @@ def test_siwx_challenge_auth_and_payment_endpoint(monkeypatch):
     app_id = "demo-app"
     auction_id = "auc-123"
     monkeypatch.setattr(
-        ws_server._active_broadcaster,
+        ws_server._get_broadcaster(),
         "notify_payment_result",
         lambda *, auction_id, consumer_did, success: True,
     )
@@ -149,7 +162,7 @@ def test_x402_payment_rejects_invalid_token(monkeypatch):
     ws_server._SIWX_TOKENS.clear()
     ws_server._CONSUMED_TX_HASHES.clear()
     monkeypatch.setattr(
-        ws_server._active_broadcaster,
+        ws_server._get_broadcaster(),
         "notify_payment_result",
         lambda *, auction_id, consumer_did, success: True,
     )
@@ -198,7 +211,7 @@ def test_x402_payment_rejects_replayed_tx_hash(monkeypatch):
     monkeypatch.setenv("PRODUCER_X402_TOKEN_ADDRESS", "0x3333333333333333333333333333333333333333")
     monkeypatch.setattr(ws_server, "_verify_onchain_payment", lambda **_: None)
     monkeypatch.setattr(
-        ws_server._active_broadcaster,
+        ws_server._get_broadcaster(),
         "notify_payment_result",
         lambda *, auction_id, consumer_did, success: True,
     )

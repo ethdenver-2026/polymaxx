@@ -19,6 +19,7 @@ from signal_schema import (
     ProducerSignal,
     SignalPreviewMessage,
 )
+from signal_schema.addressing import normalize_evm_address
 
 logger = structlog.get_logger()
 
@@ -49,9 +50,25 @@ class SignalBroadcaster:
             os.getenv("SIGNAL_AUCTION_PAYMENT_TIMEOUT_SECONDS", "20")
         )
         self._producer_did = os.getenv("PRODUCER_DID", "did:kite:producer/default/weather-v1")
-        self._producer_wallet_address = (
+        raw_wallet = (
             os.getenv("PRODUCER_WALLET_ADDRESS", "") or os.getenv("POLYMARKET_WALLET_ADDRESS", "")
-        ).strip().lower()
+        ).strip()
+        if not raw_wallet:
+            raise RuntimeError(
+                "Producer wallet address not configured. "
+                "Set PRODUCER_WALLET_ADDRESS or POLYMARKET_WALLET_ADDRESS in .env"
+            )
+        try:
+            self._producer_wallet_address = normalize_evm_address(raw_wallet)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Invalid producer wallet address: {raw_wallet}. "
+                "Must be a valid 0x-prefixed 40-character hex address."
+            ) from exc
+        logger.info(
+            "SignalBroadcaster initialized",
+            producer_wallet_address=self._producer_wallet_address,
+        )
         self._kite_x402_url = os.getenv("PRODUCER_KITE_X402_URL", "https://x402.dev.gokite.ai/api/weather")
         self._x402_mode = os.getenv("PRODUCER_X402_MODE", "x402_v2").strip().lower()
         self._public_base_url = os.getenv("PRODUCER_PUBLIC_BASE_URL", "http://127.0.0.1:8000").strip()
@@ -543,4 +560,6 @@ class AuctionState:
     close_reason: str | None = None
 
 
-broadcaster = SignalBroadcaster()  # Default instance; orchestrator creates its own with reputation
+# No default instance - orchestrator must create one via SignalBroadcaster() and call set_broadcaster()
+# This ensures PRODUCER_WALLET_ADDRESS is validated at an intentional point, not at module import.
+broadcaster: SignalBroadcaster | None = None

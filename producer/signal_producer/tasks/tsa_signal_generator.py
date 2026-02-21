@@ -5,6 +5,7 @@ Generates ProducerSignals for TSA passenger volume markets using external TSA pr
 
 import asyncio
 import json
+import random
 import sys
 import uuid
 from datetime import datetime, timedelta, UTC
@@ -436,7 +437,8 @@ class TSASignalGeneratorTask:
 
         while self._running:
             await self._generate_once()
-            await asyncio.sleep(self._signal_interval)
+            jitter = random.uniform(0, self._signal_interval * 0.2)
+            await asyncio.sleep(self._signal_interval + jitter)
 
     def stop(self) -> None:
         """Stop the TSA signal generator."""

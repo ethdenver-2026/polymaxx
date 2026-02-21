@@ -12,10 +12,13 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 COPY shared /app/shared
 COPY producer /app/producer
+COPY --from=tsa . /app/tsa-market-manipulation
 
 WORKDIR /app/producer
 RUN mkdir -p /app/producer/data
 RUN uv sync --frozen --no-dev
+
+ENV TSA_PROJECT_PATH=/app/tsa-market-manipulation
 
 EXPOSE 8000
 

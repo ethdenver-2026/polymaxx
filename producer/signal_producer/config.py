@@ -35,14 +35,14 @@ class Settings(BaseSettings):
 
     # Signal marketplace
     signal_preview_ttl_minutes: int = Field(default=30)  # how long previews stay valid
-    forecast_interval_seconds: int = Field(default=21600)  # 6h live, override for paper
+    forecast_interval_seconds: int = Field(default=60)  # 60s for testing, 21600 (6h) for live
 
     # TSA Signal Configuration
     tsa_project_path: str = Field(default="")  # Path to tsa-market-manipulation project
-    tsa_signal_interval_seconds: int = Field(default=60)  # Generate signals every 1 minute
+    tsa_signal_interval_seconds: int = Field(default=10)  # 10s for testing, 60 (1m) for live
     tsa_forecast_days: int = Field(default=3)  # Look 3 days ahead
     tsa_edge_threshold_pct: float = Field(default=1.0)  # 1% edge threshold (more signals)
-    tsa_enabled: bool = Field(default=True)  # Enable TSA signal generation
+    tsa_enabled: bool = Field(default=False)  # Requires `uv sync --extra tsa`
 
     model_config = {
         "env_file": ".env",

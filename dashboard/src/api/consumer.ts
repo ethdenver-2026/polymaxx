@@ -20,6 +20,7 @@ export async function getHealth(): Promise<{ status: string }> {
   return res.json();
 }
 
+
 export async function generateSignal(cities?: string[]): Promise<GenerateSignalResponse> {
   const res = await fetch("/api/generate-signal", {
     method: "POST",

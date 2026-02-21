@@ -73,10 +73,6 @@ preflight_start() {
     echo "ERROR: $ROOT_DIR/.env not found" >&2
     exit 1
   fi
-  if [[ ! -f "$ROOT_DIR/.venv/bin/activate" ]]; then
-    echo "ERROR: Python venv not found at $ROOT_DIR/.venv" >&2
-    exit 1
-  fi
   if [[ ! -f "$ROOT_DIR/dashboard/package.json" ]]; then
     echo "ERROR: dashboard dependencies not found (missing dashboard/package.json)" >&2
     exit 1
@@ -121,7 +117,7 @@ start_stack() {
       POLYMARKET_PRIVATE_KEY="$PRODUCER_PRIVATE_KEY" \
       POLYMARKET_WALLET_ADDRESS="$PRODUCER_WALLET_ADDRESS" \
       PRODUCER_DID="$PRODUCER_DID" \
-      bash -lc "cd \"$ROOT_DIR/producer\" && source \"$ROOT_DIR/.venv/bin/activate\" && set -a && source \"$ROOT_DIR/.env\" && set +a && uv run python -m signal_producer.main --producer --host 127.0.0.1 --port 8000"
+      bash -lc "cd \"$ROOT_DIR/producer\" && set -a && source \"$ROOT_DIR/.env\" && set +a && uv run signal-producer producer --host 127.0.0.1 --port 8000"
 
   start_process \
     "consumer-a" \
@@ -143,7 +139,7 @@ start_stack() {
       SIWX_AUTH_URL="http://127.0.0.1:8000/x402/v2/siwx/auth" \
       SIWX_APP_ID="signal-market-demo" \
       TRADING_MODE="${TRADING_MODE:-paper}" \
-      bash -lc "cd \"$ROOT_DIR\" && source \"$ROOT_DIR/.venv/bin/activate\" && set -a && source \"$ROOT_DIR/.env\" && set +a && uv run python -m signal_consumer.run --host 127.0.0.1 --api-port 8766 --verbose"
+      bash -lc "cd \"$ROOT_DIR/consumer\" && set -a && source \"$ROOT_DIR/.env\" && set +a && uv run signal-consumer --host 127.0.0.1 --api-port 8766 --verbose"
 
   start_process \
     "consumer-b" \
@@ -165,7 +161,7 @@ start_stack() {
       SIWX_AUTH_URL="http://127.0.0.1:8000/x402/v2/siwx/auth" \
       SIWX_APP_ID="signal-market-demo" \
       TRADING_MODE="${TRADING_MODE:-paper}" \
-      bash -lc "cd \"$ROOT_DIR\" && source \"$ROOT_DIR/.venv/bin/activate\" && set -a && source \"$ROOT_DIR/.env\" && set +a && uv run python -m signal_consumer.run --host 127.0.0.1 --api-port 8767 --verbose"
+      bash -lc "cd \"$ROOT_DIR/consumer\" && set -a && source \"$ROOT_DIR/.env\" && set +a && uv run signal-consumer --host 127.0.0.1 --api-port 8767 --verbose"
 
   start_process \
     "dashboard-a" \

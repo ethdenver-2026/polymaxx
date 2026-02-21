@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: producer/Dockerfile
+      additional_contexts:
+        tsa: ../tsa-market-manipulation
     image: signal-market-producer:local
     container_name: signal-market-producer
     env_file:
@@ -13,6 +15,8 @@ services:
       PRODUCER_DID: ${PRODUCER_DID}
       PRODUCER_PUBLIC_BASE_URL: http://producer:8000
       DEBUG_ENDPOINTS_ENABLED: "true"
+      TSA_PROJECT_PATH: /app/tsa-market-manipulation
+      TSA_ENABLED: "true"
     command:
       [
         "uv",
