@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from ..config import DEFAULT_CITIES
+
 if TYPE_CHECKING:
     from ..clients.gamma import GammaClient
     from ..registry.market_registry import MarketRegistry
@@ -16,7 +18,6 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 DEFAULT_POLL_INTERVAL = 10  # seconds
-DEFAULT_CITIES = ["nyc", "chicago", "miami"]
 DEFAULT_DAYS_AHEAD = 4
 
 
