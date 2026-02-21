@@ -193,7 +193,10 @@ def validate_consumer_did_wallet_binding(
 ) -> str:
     expected = derive_consumer_did_pkh(chain_id=chain_id, wallet_address=wallet_address)
     candidate = consumer_did.strip().lower()
-    if candidate and candidate != expected:
+    # Accept the default placeholder — just derive from wallet
+    if candidate in ("", "did:kite:consumer/default"):
+        return expected
+    if candidate != expected:
         raise RuntimeError(
             "Configured consumer_did does not match wallet-bound did:pkh. "
             f"expected={expected} got={consumer_did}"

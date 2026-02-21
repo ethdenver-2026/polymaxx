@@ -400,7 +400,14 @@ async def consume_producer_signals(settings: Settings) -> None:
                     payload = json.loads(message)
                     message_type = payload.get("type")
                     if message_type == "SignalPreviewMessage":
-                        await _submit_bid_for_preview(payload, settings)
+                        try:
+                            await _submit_bid_for_preview(payload, settings)
+                        except Exception as bid_exc:
+                            logger.exception(
+                                "Failed to process SignalPreviewMessage",
+                                auction_id=payload.get("auction_id"),
+                                error=str(bid_exc),
+                            )
                         continue
                     if message_type == "AuctionResultBroadcast":
                         log_auction_event(
