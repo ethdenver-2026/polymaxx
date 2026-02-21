@@ -126,11 +126,16 @@ class SignalGeneratorTask:
 
         exchange_info: PolymarketInfo = {
             "exchange": "polymarket",
+            # Event level
             "event_id": event.event_id,
+            "event_title": event.title,
+            "resolution_source": event.resolution_source or "",
+            # Market level
+            "market_question": market.question,
+            "market_group_item_title": market.group_item_title or "",
+            # Trading info
             "token_id": market.yes_token_id if side == "yes" else market.no_token_id,
             "side": side,
-            "market_description": market.question,
-            "resolution_source": "",  # Could be fetched from DB
             "market_price": market_price,
             "edge": edge,
             "price_timestamp": market.price_timestamp or datetime.now(UTC).isoformat(),
