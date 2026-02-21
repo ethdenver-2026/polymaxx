@@ -17,6 +17,7 @@ class WeatherMarket:
     """A single temperature range market."""
 
     question: str
+    group_item_title: str | None  # Short label like "39°F or below" or "42-44°F"
     low_temp: float | None  # None for "X or below"
     high_temp: float | None  # None for "X or above"
     yes_price: float
@@ -143,6 +144,7 @@ def parse_weather_event(data: dict, city: str, target_date: date) -> WeatherEven
         weather_markets.append(
             WeatherMarket(
                 question=question,
+                group_item_title=market_data.get("groupItemTitle"),
                 low_temp=low,
                 high_temp=high,
                 yes_price=float(prices[0]),

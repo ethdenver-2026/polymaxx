@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     signal_preview_ttl_minutes: int = Field(default=30)  # how long previews stay valid
     forecast_interval_seconds: int = Field(default=21600)  # 6h live, override for paper
 
+    # TSA Signal Configuration
+    tsa_project_path: str = Field(default="")  # Path to tsa-market-manipulation project
+    tsa_signal_interval_seconds: int = Field(default=60)  # Generate signals every 1 minute
+    tsa_forecast_days: int = Field(default=3)  # Look 3 days ahead
+    tsa_edge_threshold_pct: float = Field(default=1.0)  # 1% edge threshold (more signals)
+    tsa_enabled: bool = Field(default=True)  # Enable TSA signal generation
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
@@ -186,7 +193,7 @@ CITIES: dict[str, CityConfig] = {
 # seoul, paris, wellington, etc.) show systematic bias between Open-Meteo
 # GFS ensemble and Weather Underground resolution data. Miami also shows
 # ~3-4°F cold bias that needs investigation before live trading.
-DEFAULT_CITIES = ["nyc", "chicago"]  # Validated cities only
+DEFAULT_CITIES = ["nyc", "chicago", "miami"]  # Validated cities only
 
 
 def get_settings() -> Settings:

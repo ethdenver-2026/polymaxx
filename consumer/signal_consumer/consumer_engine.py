@@ -95,7 +95,7 @@ def process_signal_payload(payload: dict, settings: Settings) -> dict:
         "edge": record.edge,
         "position_size_usd": decision.position_size_usd,
         "live_price": live_price,
-        "strategy": record.strategy,
+        "signal_type": record.signal_type,
         "market_id": record.market_id,
     }
     result = execute_trade(execution_payload)

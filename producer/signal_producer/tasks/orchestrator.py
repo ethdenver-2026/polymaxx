@@ -24,6 +24,8 @@ from ..data.polymarket_price_tracker import PriceTracker
 
 from .event_discovery import EventDiscoveryTask
 from .signal_generator import SignalGeneratorTask
+from .tsa_event_discovery import TSAEventDiscoveryTask
+from .tsa_signal_generator import TSASignalGeneratorTask
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -76,8 +78,12 @@ class ProducerOrchestrator:
         self._open_meteo: OpenMeteoClient | None = None
         self._price_tracker: PriceTracker | None = None
         self._broadcaster: SignalBroadcaster | None = None
+        # Weather tasks
         self._event_discovery: EventDiscoveryTask | None = None
         self._signal_generator: SignalGeneratorTask | None = None
+        # TSA tasks
+        self._tsa_event_discovery: TSAEventDiscoveryTask | None = None
+        self._tsa_signal_generator: TSASignalGeneratorTask | None = None
 
         self._running = False
         self._shutdown_event = asyncio.Event()
@@ -122,11 +128,32 @@ class ProducerOrchestrator:
             producer_id=settings.polymarket_wallet_address or "anonymous",
         )
 
+        # TSA Tasks (optional, controlled by settings)
+        if settings.tsa_enabled:
+            self._tsa_event_discovery = TSAEventDiscoveryTask(
+                gamma_client=self._gamma,
+                registry=self._registry,
+                price_tracker=self._price_tracker,
+                days_ahead=settings.tsa_forecast_days,
+            )
+
+            self._tsa_signal_generator = TSASignalGeneratorTask(
+                registry=self._registry,
+                broadcaster=self._broadcaster,
+                engine=self._engine,
+                tsa_project_path=settings.tsa_project_path or None,
+                edge_threshold=settings.tsa_edge_threshold_pct / 100,
+                signal_interval=settings.tsa_signal_interval_seconds,
+                signal_preview_ttl_minutes=5,  # Shorter TTL for 1-minute signals
+                producer_id=settings.polymarket_wallet_address or "anonymous",
+            )
+
         logger.info(
             "Components initialized",
             cities=self._cities,
             db_path=self._db_path,
             edge_threshold=f"{self._edge_threshold:.0%}",
+            tsa_enabled=settings.tsa_enabled,
         )
 
     def _setup_signal_handlers(self) -> None:
@@ -153,6 +180,20 @@ class ProducerOrchestrator:
             asyncio.create_task(self._wait_for_shutdown(), name="shutdown_monitor"),
         ]
 
+        # Add TSA tasks if enabled
+        if self._tsa_event_discovery:
+            tasks.append(
+                asyncio.create_task(
+                    self._tsa_event_discovery.run(), name="tsa_event_discovery"
+                )
+            )
+        if self._tsa_signal_generator:
+            tasks.append(
+                asyncio.create_task(
+                    self._tsa_signal_generator.run(), name="tsa_signal_generator"
+                )
+            )
+
         try:
             # Wait for shutdown or any task to fail
             done, pending = await asyncio.wait(
@@ -176,6 +217,12 @@ class ProducerOrchestrator:
             self._event_discovery.stop()
             self._signal_generator.stop()
             self._price_tracker.stop()
+
+            # Stop TSA tasks if running
+            if self._tsa_event_discovery:
+                self._tsa_event_discovery.stop()
+            if self._tsa_signal_generator:
+                self._tsa_signal_generator.stop()
 
             # Cancel remaining tasks
             for task in pending:

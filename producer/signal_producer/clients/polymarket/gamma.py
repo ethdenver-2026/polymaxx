@@ -6,6 +6,7 @@ import httpx
 
 if TYPE_CHECKING:
     from .markets import WeatherEvent
+    from .tsa_markets import TSAEvent
 
 
 GAMMA_API_URL = "https://gamma-api.polymarket.com"
@@ -113,5 +114,56 @@ class GammaClient:
 
                 if event and not event.closed and event.active_buckets:
                     events.append(event)
+
+        return events
+
+    # TSA-specific methods
+
+    def _build_tsa_slug(self, target_date: date) -> str:
+        """Build the TSA event slug."""
+        month = target_date.strftime("%B").lower()
+        day = target_date.day
+        return f"number-of-tsa-passengers-{month}-{day}"
+
+    async def fetch_tsa_event(self, target_date: date) -> "TSAEvent | None":
+        """
+        Fetch a TSA event for a specific date.
+
+        Args:
+            target_date: Target date for the passenger count
+
+        Returns:
+            TSAEvent or None if not found
+        """
+        # Lazy import to avoid circular dependency
+        from .tsa_markets import parse_tsa_event
+
+        slug = self._build_tsa_slug(target_date)
+        data = await self.fetch_event_by_slug(slug)
+
+        if data is None:
+            return None
+
+        return parse_tsa_event(data, target_date)
+
+    async def discover_tsa_events(self, days_ahead: int = 3) -> list["TSAEvent"]:
+        """
+        Discover all active TSA events for the next N days.
+
+        Args:
+            days_ahead: How many days ahead to look
+
+        Returns:
+            List of active TSAEvents
+        """
+        events = []
+        today = date.today()
+
+        for day_offset in range(1, days_ahead + 1):
+            target = today + timedelta(days=day_offset)
+            event = await self.fetch_tsa_event(target)
+
+            if event and not event.closed and event.active_markets:
+                events.append(event)
 
         return events

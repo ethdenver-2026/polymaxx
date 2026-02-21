@@ -10,6 +10,7 @@ from .types import (
     ProducerSignalPreview,
     SignalPreviewMessage,
     SignalType,
+    TSAMetadata,
     WeatherMetadata,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "ProducerSignalPreview",
     "SignalPreviewMessage",
     "SignalType",
+    "TSAMetadata",
     "WeatherMetadata",
 ]

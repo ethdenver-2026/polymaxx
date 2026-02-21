@@ -11,8 +11,15 @@ import structlog
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..models.models import TrackedEvent, TrackedMarket, TrackedForecast
+from ..models.models import (
+    TrackedEvent,
+    TrackedMarket,
+    TrackedForecast,
+    TrackedTSAEvent,
+    TrackedTSAMarket,
+)
 from ..clients.polymarket.markets import WeatherEvent, WeatherMarket
+from ..clients.polymarket.tsa_markets import TSAEvent, TSAMarket
 
 logger = structlog.get_logger()
 
@@ -31,8 +38,10 @@ class CachedEvent:
 
     event_id: str
     db_id: int
+    title: str
     city: str
     target_date: Any  # date
+    resolution_source: str | None
     status: str
     markets: dict[str, "CachedMarket"]  # token_id -> CachedMarket
 
@@ -43,8 +52,41 @@ class CachedMarket:
 
     db_id: int
     question: str
+    group_item_title: str | None
     low_temp: float | None
     high_temp: float | None
+    yes_token_id: str
+    no_token_id: str
+    yes_price: float | None = None
+    no_price: float | None = None
+    price_timestamp: str | None = None
+
+
+# === TSA-specific cached structures ===
+
+
+@dataclass
+class CachedTSAEvent:
+    """In-memory cached TSA event data."""
+
+    event_id: str
+    db_id: int
+    title: str
+    target_date: Any  # date
+    resolution_source: str | None
+    status: str
+    markets: dict[str, "CachedTSAMarket"]  # token_id -> CachedTSAMarket
+
+
+@dataclass
+class CachedTSAMarket:
+    """In-memory cached TSA market data."""
+
+    db_id: int
+    question: str
+    group_item_title: str | None
+    bracket_lower: int | None
+    bracket_upper: int | None
     yes_token_id: str
     no_token_id: str
     yes_price: float | None = None
@@ -63,10 +105,16 @@ class MarketRegistry:
     def __init__(self, engine: Engine):
         self._engine = engine
         self._session_factory = sessionmaker(bind=engine)
+        # Weather event caches
         self._events: dict[str, CachedEvent] = {}  # event_id -> CachedEvent
         self._token_to_event: dict[str, str] = {}  # token_id -> event_id
+        # TSA event caches
+        self._tsa_events: dict[str, CachedTSAEvent] = {}  # event_id -> CachedTSAEvent
+        self._token_to_tsa_event: dict[str, str] = {}  # token_id -> event_id
+        # Shared price cache (all tokens)
         self._prices: dict[str, CachedPrice] = {}  # token_id -> CachedPrice
         self._load_from_db()
+        self._load_tsa_from_db()
 
     def _get_session(self) -> Session:
         return self._session_factory()
@@ -89,6 +137,7 @@ class MarketRegistry:
                     cached_market = CachedMarket(
                         db_id=m.id,
                         question=m.question,
+                        group_item_title=m.group_item_title,
                         low_temp=m.low_temp,
                         high_temp=m.high_temp,
                         yes_token_id=m.yes_token_id,
@@ -114,8 +163,10 @@ class MarketRegistry:
                 self._events[db_event.event_id] = CachedEvent(
                     event_id=db_event.event_id,
                     db_id=db_event.id,
+                    title=db_event.title,
                     city=db_event.city,
                     target_date=db_event.target_date,
+                    resolution_source=db_event.resolution_source,
                     status=db_event.status,
                     markets=cached_markets,
                 )
@@ -172,6 +223,7 @@ class MarketRegistry:
                 cached_market = CachedMarket(
                     db_id=db_market.id,
                     question=market.question,
+                    group_item_title=market.group_item_title,
                     low_temp=market.low_temp,
                     high_temp=market.high_temp,
                     yes_token_id=market.yes_token_id,
@@ -202,8 +254,10 @@ class MarketRegistry:
             self._events[event.event_id] = CachedEvent(
                 event_id=event.event_id,
                 db_id=db_event.id,
+                title=event.title,
                 city=event.city,
                 target_date=event.target_date,
+                resolution_source=event.resolution_source,
                 status="active",
                 markets=cached_markets,
             )
@@ -229,7 +283,7 @@ class MarketRegistry:
         """Update cached price (in-memory only, prices are ephemeral)."""
         self._prices[token_id] = CachedPrice(price=price, timestamp=timestamp)
 
-        # Also update the cached market
+        # Also update the cached weather market
         event_id = self._token_to_event.get(token_id)
         if event_id and event_id in self._events:
             cached_event = self._events[event_id]
@@ -240,6 +294,18 @@ class MarketRegistry:
                 else:
                     market.no_price = price
                 market.price_timestamp = timestamp
+
+        # Also update the cached TSA market
+        tsa_event_id = self._token_to_tsa_event.get(token_id)
+        if tsa_event_id and tsa_event_id in self._tsa_events:
+            cached_tsa_event = self._tsa_events[tsa_event_id]
+            if token_id in cached_tsa_event.markets:
+                tsa_market = cached_tsa_event.markets[token_id]
+                if token_id == tsa_market.yes_token_id:
+                    tsa_market.yes_price = price
+                else:
+                    tsa_market.no_price = price
+                tsa_market.price_timestamp = timestamp
 
     def get_price(self, token_id: str) -> float | None:
         """Get cached price for a token."""
@@ -295,12 +361,222 @@ class MarketRegistry:
             session.close()
 
     def get_active_events(self) -> list[CachedEvent]:
-        """Return only status='active' events."""
+        """Return only status='active' weather events."""
         return [e for e in self._events.values() if e.status == "active"]
 
     def get_active_token_ids(self) -> list[str]:
         """Return all token_ids for active events (used on startup to resubscribe)."""
         tokens = []
+        # Weather events
         for event in self.get_active_events():
             tokens.extend(event.markets.keys())
+        # TSA events
+        for event in self.get_active_tsa_events():
+            tokens.extend(event.markets.keys())
         return list(set(tokens))  # Deduplicate
+
+    # === TSA-specific methods ===
+
+    def _load_tsa_from_db(self) -> None:
+        """Load active TSA events from database into cache."""
+        session = self._get_session()
+        try:
+            db_events = session.query(TrackedTSAEvent).filter(
+                TrackedTSAEvent.status == "active"
+            ).all()
+
+            for db_event in db_events:
+                markets = session.query(TrackedTSAMarket).filter(
+                    TrackedTSAMarket.event_id == db_event.id
+                ).all()
+
+                cached_markets = {}
+                for m in markets:
+                    cached_market = CachedTSAMarket(
+                        db_id=m.id,
+                        question=m.question,
+                        group_item_title=m.group_item_title,
+                        bracket_lower=m.bracket_lower,
+                        bracket_upper=m.bracket_upper,
+                        yes_token_id=m.yes_token_id,
+                        no_token_id=m.no_token_id,
+                        yes_price=m.yes_price,
+                        no_price=m.no_price,
+                    )
+                    cached_markets[m.yes_token_id] = cached_market
+                    cached_markets[m.no_token_id] = cached_market
+                    self._token_to_tsa_event[m.yes_token_id] = db_event.event_id
+                    self._token_to_tsa_event[m.no_token_id] = db_event.event_id
+
+                    # Seed in-memory price cache from DB
+                    if m.yes_price is not None:
+                        self._prices[m.yes_token_id] = CachedPrice(
+                            price=m.yes_price, timestamp="db_seed",
+                        )
+                    if m.no_price is not None:
+                        self._prices[m.no_token_id] = CachedPrice(
+                            price=m.no_price, timestamp="db_seed",
+                        )
+
+                self._tsa_events[db_event.event_id] = CachedTSAEvent(
+                    event_id=db_event.event_id,
+                    db_id=db_event.id,
+                    title=db_event.title,
+                    target_date=db_event.target_date,
+                    resolution_source=db_event.resolution_source,
+                    status=db_event.status,
+                    markets=cached_markets,
+                )
+
+            logger.info("Loaded TSA events from DB", count=len(self._tsa_events))
+        finally:
+            session.close()
+
+    def register_tsa_event(self, event: TSAEvent) -> list[str]:
+        """
+        Register TSA event, persist to DB, return new token_ids to subscribe.
+
+        If event already exists, returns empty list.
+        """
+        # Check if already tracked
+        if event.event_id in self._tsa_events:
+            logger.debug("TSA event already tracked", event_id=event.event_id)
+            return []
+
+        session = self._get_session()
+        try:
+            # Create DB records
+            db_event = TrackedTSAEvent(
+                event_id=event.event_id,
+                title=event.title,
+                target_date=event.target_date,
+                resolution_source=event.resolution_source,
+                status="active",
+            )
+            session.add(db_event)
+            session.flush()  # Get the ID
+
+            new_tokens = []
+            cached_markets = {}
+
+            for market in event.markets:
+                db_market = TrackedTSAMarket(
+                    event_id=db_event.id,
+                    question=market.question,
+                    group_item_title=market.group_item_title,
+                    bracket_lower=market.bracket_lower,
+                    bracket_upper=market.bracket_upper,
+                    yes_token_id=market.yes_token_id,
+                    no_token_id=market.no_token_id,
+                    yes_price=market.yes_price,
+                    no_price=market.no_price,
+                    active=market.active,
+                )
+                session.add(db_market)
+                session.flush()
+
+                new_tokens.extend([market.yes_token_id, market.no_token_id])
+
+                cached_market = CachedTSAMarket(
+                    db_id=db_market.id,
+                    question=market.question,
+                    group_item_title=market.group_item_title,
+                    bracket_lower=market.bracket_lower,
+                    bracket_upper=market.bracket_upper,
+                    yes_token_id=market.yes_token_id,
+                    no_token_id=market.no_token_id,
+                    yes_price=market.yes_price,
+                    no_price=market.no_price,
+                )
+                cached_markets[market.yes_token_id] = cached_market
+                cached_markets[market.no_token_id] = cached_market
+                self._token_to_tsa_event[market.yes_token_id] = event.event_id
+                self._token_to_tsa_event[market.no_token_id] = event.event_id
+
+                # Seed in-memory price cache from Gamma API prices
+                now_ts = datetime.now(UTC).isoformat()
+                if market.yes_price is not None:
+                    self._prices[market.yes_token_id] = CachedPrice(
+                        price=market.yes_price, timestamp=now_ts,
+                    )
+                if market.no_price is not None:
+                    self._prices[market.no_token_id] = CachedPrice(
+                        price=market.no_price, timestamp=now_ts,
+                    )
+
+            session.commit()
+
+            # Update cache
+            self._tsa_events[event.event_id] = CachedTSAEvent(
+                event_id=event.event_id,
+                db_id=db_event.id,
+                title=event.title,
+                target_date=event.target_date,
+                resolution_source=event.resolution_source,
+                status="active",
+                markets=cached_markets,
+            )
+
+            logger.info(
+                "Registered TSA event",
+                event_id=event.event_id,
+                target_date=str(event.target_date),
+                markets=len(event.markets),
+                tokens=len(new_tokens),
+            )
+
+            return new_tokens
+
+        except Exception as e:
+            session.rollback()
+            logger.error("Failed to register TSA event", event_id=event.event_id, error=str(e))
+            raise
+        finally:
+            session.close()
+
+    def get_active_tsa_events(self) -> list[CachedTSAEvent]:
+        """Return only status='active' TSA events."""
+        return [e for e in self._tsa_events.values() if e.status == "active"]
+
+    def mark_tsa_resolved(self, event_id: str, resolution: str) -> list[str]:
+        """Mark TSA event resolved (soft delete), return token_ids to unsubscribe."""
+        if event_id not in self._tsa_events:
+            logger.warning("TSA event not found", event_id=event_id)
+            return []
+
+        cached_event = self._tsa_events[event_id]
+        tokens_to_unsubscribe = list(cached_event.markets.keys())
+
+        session = self._get_session()
+        try:
+            db_event = session.query(TrackedTSAEvent).filter(
+                TrackedTSAEvent.event_id == event_id
+            ).first()
+
+            if db_event:
+                db_event.status = "resolved"
+                db_event.resolved_at = datetime.now(UTC)
+                session.commit()
+
+            # Update cache
+            cached_event.status = "resolved"
+
+            # Clean up token mapping
+            for token_id in tokens_to_unsubscribe:
+                self._token_to_tsa_event.pop(token_id, None)
+                self._prices.pop(token_id, None)
+
+            logger.info(
+                "Marked TSA event resolved",
+                event_id=event_id,
+                tokens_unsubscribed=len(tokens_to_unsubscribe),
+            )
+
+            return tokens_to_unsubscribe
+
+        except Exception as e:
+            session.rollback()
+            logger.error("Failed to mark TSA resolved", event_id=event_id, error=str(e))
+            raise
+        finally:
+            session.close()

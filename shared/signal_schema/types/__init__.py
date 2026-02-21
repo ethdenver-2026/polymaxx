@@ -5,6 +5,7 @@ from .producer_signal import (
     PolymarketInfo,
     ProducerSignal,
     SignalType,
+    TSAMetadata,
     WeatherMetadata,
 )
 from .auction_messages import (
@@ -25,5 +26,6 @@ __all__ = [
     "ProducerSignalPreview",
     "SignalPreviewMessage",
     "SignalType",
+    "TSAMetadata",
     "WeatherMetadata",
 ]

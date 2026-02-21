@@ -81,7 +81,7 @@ def _canonical_payload() -> dict:
 def test_parse_producer_signal_record_accepts_canonical_schema():
     record = parse_producer_signal_record(_canonical_payload())
     assert isinstance(record, ProducerSignalRecord)
-    assert record.strategy == "weather"
+    assert record.signal_type == "weather"
     assert record.market_id == "evt-1"
     assert record.token_id == "tok-yes-1"
     assert record.metadata["target_date"] == "2026-02-20"

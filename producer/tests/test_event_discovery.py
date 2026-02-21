@@ -15,6 +15,7 @@ def sample_weather_event():
     markets = [
         WeatherMarket(
             question="Will temp be 34-35°F?",
+            group_item_title="34-35°F",
             low_temp=34.0,
             high_temp=36.0,
             yes_price=0.35,

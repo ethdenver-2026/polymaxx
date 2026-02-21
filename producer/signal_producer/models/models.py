@@ -114,6 +114,56 @@ class TrackedForecast(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class TrackedTSAEvent(Base):
+    """
+    A TSA passenger volume event being tracked by the producer.
+
+    Events transition through: active -> resolved/expired (never deleted).
+    """
+
+    __tablename__ = "tracked_tsa_events"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(String(100), nullable=False, unique=True, index=True)
+    title = Column(Text, nullable=False)
+    target_date = Column(Date, nullable=False, index=True)
+    resolution_source = Column(Text)  # e.g., TSA data source URL
+
+    # Lifecycle
+    status = Column(String(20), nullable=False, index=True)  # 'active', 'resolved', 'expired'
+    resolved_at = Column(DateTime)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TrackedTSAMarket(Base):
+    """
+    A passenger volume bracket market within a TSA event.
+
+    Each market has YES/NO tokens and tracks current price.
+    """
+
+    __tablename__ = "tracked_tsa_markets"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey('tracked_tsa_events.id'), nullable=False, index=True)
+    question = Column(Text, nullable=False)  # e.g., "Will TSA passengers be between 2.2M-2.4M?"
+    group_item_title = Column(String(100))  # e.g., "2.2M-2.4M" (short label)
+    bracket_lower = Column(Integer)  # None for "below X"
+    bracket_upper = Column(Integer)  # None for "above X"
+    yes_token_id = Column(String(100), nullable=False, index=True)
+    no_token_id = Column(String(100), nullable=False)
+    active = Column(Boolean, nullable=False, default=True)
+
+    # Current prices (updated via CLOB websocket, in-memory cache is primary)
+    yes_price = Column(Float)
+    no_price = Column(Float)
+    price_timestamp = Column(DateTime)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class SignalRecord(Base):
     """Every signal generated, whether traded or not.
 

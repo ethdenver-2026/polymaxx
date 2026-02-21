@@ -18,6 +18,7 @@ def mock_registry():
     cached_market = CachedMarket(
         db_id=1,
         question="Will temp be 42-44°F?",
+        group_item_title="42-44°F",
         low_temp=42.0,
         high_temp=44.0,
         yes_token_id="yes_token_123",
@@ -31,8 +32,10 @@ def mock_registry():
     cached_event = CachedEvent(
         event_id="213978",
         db_id=1,
+        title="Highest temperature in NYC on February 20?",
         city="nyc",
         target_date=date(2026, 2, 20),
+        resolution_source="https://wunderground.com/...",
         status="active",
         markets={
             "yes_token_123": cached_market,

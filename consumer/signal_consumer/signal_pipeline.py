@@ -45,7 +45,7 @@ class ProducerSignalRecord(BaseModel):
     """Wire contract received from producer websocket."""
 
     id: int | None = None
-    strategy: str
+    signal_type: str
     market_id: str
     token_id: str
     model_probability: float = Field(ge=0, le=1)
@@ -100,7 +100,7 @@ def parse_producer_signal_record(payload: dict[str, Any]) -> ProducerSignalRecor
     )
     normalized_payload: dict[str, Any] = {
         "id": None,
-        "strategy": canonical.signal_type,
+        "signal_type": canonical.signal_type,
         "market_id": exchange.event_id,
         "token_id": exchange.token_id,
         "model_probability": canonical.model_probability,
@@ -171,7 +171,7 @@ def evaluate_strategy(
     _ = now or datetime.now(UTC)
     reasons: list[str] = []
 
-    if record.strategy != "weather":
+    if record.signal_type not in ("weather", "tsa"):
         return StrategyDecision(
             should_trade=False,
             reasons=["unsupported_strategy"],

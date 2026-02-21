@@ -52,6 +52,7 @@ def sample_weather_event():
     markets = [
         WeatherMarket(
             question="Will temp be 42-44°F?",
+            group_item_title="42-44°F",
             low_temp=42.0,
             high_temp=44.0,
             yes_price=0.30,
@@ -63,6 +64,7 @@ def sample_weather_event():
         ),
         WeatherMarket(
             question="Will temp be 44-46°F?",
+            group_item_title="44-46°F",
             low_temp=44.0,
             high_temp=46.0,
             yes_price=0.25,

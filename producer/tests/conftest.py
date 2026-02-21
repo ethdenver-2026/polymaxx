@@ -42,6 +42,7 @@ class MockWeatherMarket:
     high_temp: float | None
     yes_price: float
     no_price: float
+    group_item_title: str | None = None
     yes_token_id: str = "mock_yes_token"
     no_token_id: str = "mock_no_token"
     active: bool = True
