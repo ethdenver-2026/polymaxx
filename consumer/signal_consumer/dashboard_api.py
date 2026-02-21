@@ -11,20 +11,23 @@ import json
 import os
 import queue
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse
 
 from pydantic import BaseModel
 
-import httpx
 import structlog
 
 from .balances import get_balances
 from .config import get_settings, get_trading_mode, set_trading_mode
 from .db import get_auction_events, get_trades, log_auction_event, log_trade, get_paper_positions, get_signals, log_signal, subscribe, unsubscribe
 from .polymarket import init_client, get_live_price as _get_live_price
-from .signal_generator import generate_signal
+try:
+    from .signal_generator import generate_signal
+except ImportError:
+    generate_signal = None
 
 logger = structlog.get_logger()
 
@@ -219,6 +222,14 @@ async def generate_signal_endpoint(body: GenerateSignalRequest | None = None):
         }
     except (httpx.ConnectError, httpx.HTTPStatusError):
         logger.info("Producer unreachable, falling back to local generator", cities=cities)
+
+    if generate_signal is None:
+        return {
+            "ok": False,
+            "signals_found": 0,
+            "source": "local",
+            "errors": ["Local signal generator unavailable: missing signal_consumer.signal_generator"],
+        }
 
     # --- Fallback: local signal generator per city ---
     total_logged = 0
