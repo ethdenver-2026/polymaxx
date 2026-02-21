@@ -59,3 +59,34 @@ def test_log_signal_notifies_sse_subscribers(tmp_path, monkeypatch):
         assert event["status"] == "paper"
     finally:
         db_module.unsubscribe(q)
+
+
+def test_log_and_fetch_auction_events(tmp_path, monkeypatch):
+    db_path = tmp_path / "consumer_signals.db"
+    monkeypatch.setattr(db_module, "DB_PATH", db_path)
+
+    db_module.log_auction_event(
+        auction_id="auc-1",
+        consumer_did="did:kite:test/consumer-a",
+        producer_did="did:kite:test/producer",
+        event_id="evt-1",
+        bid_amount=3.25,
+        auction_end_utc="2026-02-20T10:00:00+00:00",
+        outcome="bid_submitted",
+        raw_message={"type": "AuctionBidMessage"},
+    )
+    db_module.log_auction_event(
+        auction_id="auc-1",
+        consumer_did="did:kite:test/consumer-a",
+        outcome="payment_succeeds",
+        winner_did="did:kite:test/consumer-a",
+        winning_paid_amount=3.25,
+        raw_message={"type": "AuctionPaymentStatus", "status": "PAYMENT_SUCCEEDS"},
+    )
+
+    events = db_module.get_auction_events(limit=10)
+    assert len(events) == 2
+    assert events[0]["outcome"] == "payment_succeeds"
+    assert events[0]["winning_paid_amount"] == 3.25
+    assert events[1]["outcome"] == "bid_submitted"
+    assert events[1]["auction_id"] == "auc-1"

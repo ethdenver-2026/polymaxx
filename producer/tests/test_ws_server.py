@@ -1,4 +1,4 @@
-"""Smoke tests for websocket signal delivery."""
+"""Smoke tests for websocket signal preview delivery."""
 
 from fastapi.testclient import TestClient
 
@@ -7,7 +7,7 @@ from signal_producer.signals.types import ProducerSignal, WeatherMetadata, Polym
 
 
 def test_consumer_receives_canonical_producer_signal_payload(monkeypatch):
-    """Consumer websocket receives canonical ProducerSignal payload."""
+    """Consumer websocket receives SignalPreviewMessage payload."""
 
     async def fake_run_once(cities=None, broadcast_signals=False):
         signal = ProducerSignal(
@@ -43,20 +43,17 @@ def test_consumer_receives_canonical_producer_signal_payload(monkeypatch):
     monkeypatch.setattr(ws_server, "run_once", fake_run_once)
 
     with TestClient(ws_server.app) as client:
-        with client.websocket_connect("/ws/signals") as websocket:
+        with client.websocket_connect("/ws/signals?consumer_did=did:kite:test/consumer-a") as websocket:
             response = client.post("/run-once")
             assert response.status_code == 200
             assert response.json()["signals_found"] == 1
 
             payload = websocket.receive_json()
-            assert "published_at" in payload
-            payload.pop("published_at")
+            assert payload["type"] == "SignalPreviewMessage"
             assert payload["signal_type"] == "weather"
-            assert payload["model_probability"] == 0.7
-            assert payload["forecast_source"] == "open_meteo"
-            assert payload["metadata"]["city"] == "nyc"
-            assert payload["metadata"]["target_date"] == "2026-02-20"
+            assert payload["producer_did"].startswith("did:kite:")
+            assert payload["auction_id"]
+            assert payload["auction_end_utc"]
+            assert payload["last_price_paid"] == 0.55
             assert payload["exchanges"][0]["exchange"] == "polymarket"
             assert payload["exchanges"][0]["event_id"] == "event-123"
-            assert payload["exchanges"][0]["token_id"] == "token-abc"
-            assert payload["exchanges"][0]["side"] == "yes"

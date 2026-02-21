@@ -23,7 +23,13 @@ class Settings(BaseSettings):
     min_position_usd: float = Field(default=1.0, gt=0.0)
     execution_workers: int = Field(default=16, ge=1)
     execution_queue_maxsize: int = Field(default=1000, ge=1)
+    consumer_did: str = Field(default="did:kite:consumer/default")
+    consumer_wallet_address: str = Field(default="0x0000000000000000000000000000000000000000")
+    consumer_default_bid_amount: float = Field(default=1.0, gt=0.0)
+    consumer_bid_timeout_seconds: float = Field(default=25.0, ge=1.0)
+    consumer_payment_auto_succeeds: bool = Field(default=True)
     producer_ws_url: str = Field(default="ws://127.0.0.1:8000/ws/signals")
+    producer_bid_ws_url: str = Field(default="ws://127.0.0.1:8000/ws/bids")
     producer_ws_reconnect_seconds: float = Field(default=2.0, ge=0.1)
 
     # Polymarket / CLOB
