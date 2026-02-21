@@ -58,7 +58,7 @@ services:
       SIWX_CHALLENGE_URL: http://producer:8000/x402/v2/siwx/challenge
       SIWX_AUTH_URL: http://producer:8000/x402/v2/siwx/auth
       SIWX_APP_ID: signal-market-demo
-      BID_LLM_PROVIDER: anthropic
+      BID_LLM_PROVIDER: g0
       X402_MODE: x402_v2
     depends_on:
       - producer
@@ -103,7 +103,7 @@ services:
       SIWX_CHALLENGE_URL: http://producer:8000/x402/v2/siwx/challenge
       SIWX_AUTH_URL: http://producer:8000/x402/v2/siwx/auth
       SIWX_APP_ID: signal-market-demo
-      BID_LLM_PROVIDER: anthropic
+      BID_LLM_PROVIDER: g0
       X402_MODE: x402_v2
     depends_on:
       - producer

@@ -56,7 +56,7 @@ if not p.exists():
     print("missing .env")
     raise SystemExit(1)
 text = p.read_text()
-for k in ("ANTHROPIC_API_KEY",):
+for k in ("G0_API_KEY",):
     print(k, "present" if f"{k}=" in text and f"{k}=\n" not in text else "missing_or_empty")
 PY
 ```
@@ -102,8 +102,8 @@ POLYMARKET_PRIVATE_KEY=${CONSUMER_A_PRIVATE_KEY}
 PRODUCER_WS_URL=ws://127.0.0.1:8000/ws/signals
 PRODUCER_BID_WS_URL=ws://127.0.0.1:8000/ws/bids
 
-BID_LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY}
+BID_LLM_PROVIDER=g0
+G0_API_KEY=\${G0_API_KEY}
 
 X402_MODE=x402_v2
 X402_V2_NETWORK=base-sepolia
@@ -129,8 +129,8 @@ POLYMARKET_PRIVATE_KEY=${CONSUMER_B_PRIVATE_KEY}
 PRODUCER_WS_URL=ws://127.0.0.1:8000/ws/signals
 PRODUCER_BID_WS_URL=ws://127.0.0.1:8000/ws/bids
 
-BID_LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY}
+BID_LLM_PROVIDER=g0
+G0_API_KEY=\${G0_API_KEY}
 
 X402_MODE=x402_v2
 X402_V2_NETWORK=base-sepolia
@@ -198,12 +198,12 @@ sqlite3 data/consumer_signals.db "select datetime(received_at,'unixepoch'),consu
 
 - `Invalid wallet address format: 0xabc`
   - Consumer wallet format is invalid for `did:pkh` validation. Must be a 42-char `0x...` address.
-- `ANTHROPIC_API_KEY is required for anthropic bid provider`
+- `G0_API_KEY is required for g0 bid provider`
   - Consumer cannot produce bid decisions until API key is set.
 - `SIWX_CHALLENGE_URL is required for x402_v2 mode` (or SIWX auth/app/private-key variants)
   - x402_v2 payment cannot run without SIWx auth configuration.
 - `LLM response is not valid JSON: ...`
-  - Anthropic output didn't match strict JSON format expected by bid parser.
+  - 0G output didn't match strict JSON format expected by bid parser.
 - `[Errno 48] ... address already in use`
   - Chosen local port is occupied.
 

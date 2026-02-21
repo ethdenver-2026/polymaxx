@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from dataclasses import asdict
 from urllib.parse import urlencode
@@ -30,6 +31,8 @@ from .llm_clients import BidLlmRouter
 
 logger = structlog.get_logger()
 _AUCTION_SIGNAL_IDS: dict[tuple[str, str], str] = {}
+_PREVIEW_QUEUE_MAXSIZE = 256
+_PREVIEW_WORKER_CONCURRENCY = 8
 
 
 def _remember_signal_id(auction_id: str, consumer_did: str, signal_id: str) -> None:
@@ -426,9 +429,7 @@ async def determine_bid_for_preview(payload: dict, settings: Settings) -> BidDec
     )
     router = BidLlmRouter(
         provider=settings.bid_llm_provider,
-        anthropic_api_key=settings.anthropic_api_key,
-        anthropic_model=settings.anthropic_bid_model,
-        anthropic_temperature=settings.bid_llm_temperature,
+        temperature=settings.bid_llm_temperature,
         g0_api_key=settings.g0_api_key,
         g0_base_url=settings.g0_base_url,
         g0_model=settings.g0_bid_model,
@@ -548,51 +549,82 @@ async def consume_producer_signals(settings: Settings) -> None:
             signal_url = f"{ws_url}?{urlencode({'consumer_did': settings.consumer_did})}"
             async with websockets.connect(signal_url) as ws:
                 logger.info("Connected to producer websocket", ws_url=ws_url)
-                async for message in ws:
-                    payload = json.loads(message)
-                    message_type = payload.get("type")
-                    if message_type == "SignalPreviewMessage":
+                preview_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=_PREVIEW_QUEUE_MAXSIZE)
+
+                async def _preview_worker(worker_name: str) -> None:
+                    while True:
+                        payload = await preview_queue.get()
                         try:
                             await _submit_bid_for_preview(payload, settings)
-                        except Exception as bid_exc:
+                        except Exception as exc:
                             logger.exception(
-                                "Failed to process SignalPreviewMessage",
+                                "Preview processing failed",
+                                worker=worker_name,
                                 auction_id=payload.get("auction_id"),
-                                error=str(bid_exc),
+                                error=str(exc),
                             )
-                        continue
-                    if message_type == "AuctionResultBroadcast":
-                        auction_id = payload.get("auction_id", "unknown")
-                        log_auction_event(
-                            auction_id=auction_id,
-                            consumer_did=settings.consumer_did,
-                            outcome="auction_result",
-                            winner_did=payload.get("winner_did"),
-                            winning_paid_amount=payload.get("paid_amount"),
-                            raw_message=payload,
-                        )
-                        winner_did = payload.get("winner_did")
-                        result_state = "auction_result"
-                        if winner_did:
-                            if winner_did == settings.consumer_did:
-                                result_state = "auction_winner_confirmed"
+                        finally:
+                            preview_queue.task_done()
+
+                workers = [
+                    asyncio.create_task(_preview_worker(f"preview-worker-{i+1}"))
+                    for i in range(_PREVIEW_WORKER_CONCURRENCY)
+                ]
+                try:
+                    async for message in ws:
+                        payload = json.loads(message)
+                        message_type = payload.get("type")
+                        if message_type == "SignalPreviewMessage":
+                            auction_id = payload.get("auction_id")
+                            try:
+                                preview_queue.put_nowait(payload)
+                            except asyncio.QueueFull:
+                                logger.error(
+                                    "Preview queue full; dropping preview message",
+                                    auction_id=auction_id,
+                                    queue_maxsize=_PREVIEW_QUEUE_MAXSIZE,
+                                )
+                            continue
+                        if message_type == "AuctionResultBroadcast":
+                            auction_id = payload.get("auction_id", "unknown")
+                            log_auction_event(
+                                auction_id=auction_id,
+                                consumer_did=settings.consumer_did,
+                                outcome="auction_result",
+                                winner_did=payload.get("winner_did"),
+                                winning_paid_amount=payload.get("paid_amount"),
+                                raw_message=payload,
+                            )
+                            winner_did = payload.get("winner_did")
+                            result_state = "auction_result"
+                            if winner_did:
+                                if winner_did == settings.consumer_did:
+                                    result_state = "auction_winner_confirmed"
+                                else:
+                                    result_state = "auction_loser_confirmed"
                             else:
-                                result_state = "auction_loser_confirmed"
-                        else:
-                            result_state = "auction_no_winner_confirmed"
-                        _safe_update_lifecycle(
-                            auction_id,
-                            settings.consumer_did,
-                            state=result_state,
-                            winner_did=winner_did,
-                            winning_paid_amount=payload.get("paid_amount"),
-                        )
-                        continue
-                    if message_type == "SignalMessage":
-                        signal_payload = payload.get("signal", {})
-                        handle_raw_ws_message(json.dumps(signal_payload), settings)
-                        continue
-                    handle_raw_ws_message(message, settings)
+                                result_state = "auction_no_winner_confirmed"
+                            _safe_update_lifecycle(
+                                auction_id,
+                                settings.consumer_did,
+                                state=result_state,
+                                winner_did=winner_did,
+                                winning_paid_amount=payload.get("paid_amount"),
+                            )
+                            continue
+                        if message_type == "SignalMessage":
+                            signal_payload = payload.get("signal", {})
+                            handle_raw_ws_message(json.dumps(signal_payload), settings)
+                            continue
+                        handle_raw_ws_message(message, settings)
+                finally:
+                    # Drain queued preview work to preserve in-flight auctions across reconnects.
+                    await preview_queue.join()
+                    for worker in workers:
+                        worker.cancel()
+                    for worker in workers:
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await worker
         except Exception as exc:
             logger.error(
                 "Producer websocket disconnected",

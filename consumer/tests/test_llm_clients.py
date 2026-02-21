@@ -32,7 +32,7 @@ def test_parse_bid_decision_json_accepts_fenced_output():
 
 def test_bid_llm_router_rejects_unknown_provider():
     with pytest.raises(RuntimeError, match="Unsupported bid LLM provider"):
-        BidLlmRouter(provider="bad-provider", anthropic_api_key="x", anthropic_model="m")
+        BidLlmRouter(provider="bad-provider")
 
 
 def test_bid_llm_router_uses_injected_client():
@@ -52,10 +52,8 @@ def test_bid_llm_router_uses_injected_client():
             return BidDecision(should_bid=True, bid_amount=1.75, rationale="ok")
 
     router = BidLlmRouter(
-        provider="anthropic",
-        anthropic_api_key="x",
-        anthropic_model="claude-sonnet-4-6",
-        anthropic_client=_FakeClient(),
+        provider="g0",
+        g0_client=_FakeClient(),
     )
     decision = asyncio.run(router.decide_bid(context))
     assert decision.bid_amount == 1.75

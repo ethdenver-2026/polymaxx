@@ -97,7 +97,7 @@ preflight_start() {
   require_var CONSUMER_B_PAYMENT_PRIVATE_KEY
   require_var CONSUMER_B_TRADING_WALLET_ADDRESS
   require_var CONSUMER_B_TRADING_PRIVATE_KEY
-  require_var ANTHROPIC_API_KEY
+  require_var G0_API_KEY
 
   ensure_port_free 8000
   ensure_port_free 8766
@@ -133,7 +133,7 @@ start_stack() {
       PAYMENT_WALLET_PRIVATE_KEY="$CONSUMER_A_PAYMENT_PRIVATE_KEY" \
       PRODUCER_WS_URL="ws://127.0.0.1:8000/ws/signals" \
       PRODUCER_BID_WS_URL="ws://127.0.0.1:8000/ws/bids" \
-      BID_LLM_PROVIDER="anthropic" \
+      BID_LLM_PROVIDER="g0" \
       X402_MODE="x402_v2" \
       SIWX_CHALLENGE_URL="http://127.0.0.1:8000/x402/v2/siwx/challenge" \
       SIWX_AUTH_URL="http://127.0.0.1:8000/x402/v2/siwx/auth" \
@@ -155,7 +155,7 @@ start_stack() {
       PAYMENT_WALLET_PRIVATE_KEY="$CONSUMER_B_PAYMENT_PRIVATE_KEY" \
       PRODUCER_WS_URL="ws://127.0.0.1:8000/ws/signals" \
       PRODUCER_BID_WS_URL="ws://127.0.0.1:8000/ws/bids" \
-      BID_LLM_PROVIDER="anthropic" \
+      BID_LLM_PROVIDER="g0" \
       X402_MODE="x402_v2" \
       SIWX_CHALLENGE_URL="http://127.0.0.1:8000/x402/v2/siwx/challenge" \
       SIWX_AUTH_URL="http://127.0.0.1:8000/x402/v2/siwx/auth" \

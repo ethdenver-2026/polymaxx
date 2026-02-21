@@ -58,44 +58,6 @@ def _prompt_for_context(context: BidPricingInput) -> str:
     )
 
 
-class AnthropicBidClient:
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        model: str,
-        temperature: float,
-        timeout_seconds: float,
-    ) -> None:
-        if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is required for anthropic bid provider")
-        if not model:
-            raise RuntimeError("ANTHROPIC_BID_MODEL is required for anthropic bid provider")
-        from anthropic import AsyncAnthropic
-
-        self._client = AsyncAnthropic(api_key=api_key, timeout=timeout_seconds)
-        self._model = model
-        self._temperature = temperature
-
-    async def decide_bid(self, context: BidPricingInput) -> BidDecision:
-        prompt = _prompt_for_context(context)
-        logger.debug("Submitting Anthropic bid prompt", prompt=prompt)
-        response = await self._client.messages.create(
-            model=self._model,
-            max_tokens=300,
-            temperature=self._temperature,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        logger.debug("Received Anthropic bid response", response=str(response))
-        blocks = getattr(response, "content", [])
-        if not blocks:
-            raise RuntimeError("Anthropic returned empty content for bid decision")
-        first_text = getattr(blocks[0], "text", "")
-        if not first_text:
-            raise RuntimeError("Anthropic returned non-text content for bid decision")
-        return parse_bid_decision_json(first_text)
-
-
 class ZeroGBidClient:
     def __init__(
         self,
@@ -139,35 +101,22 @@ class BidLlmRouter:
         self,
         *,
         provider: str,
-        anthropic_api_key: str,
-        anthropic_model: str,
-        anthropic_temperature: float = 0.8,
+        temperature: float = 0.8,
         g0_api_key: str = "",
         g0_base_url: str = "",
         g0_model: str = "",
         request_timeout_seconds: float = 15.0,
-        anthropic_client: BidLlmClient | None = None,
         g0_client: BidLlmClient | None = None,
     ) -> None:
-        self._provider = provider
-        if provider == "anthropic":
-            self._client = anthropic_client or AnthropicBidClient(
-                api_key=anthropic_api_key,
-                model=anthropic_model,
-                temperature=anthropic_temperature,
-                timeout_seconds=request_timeout_seconds,
-            )
-            return
-        if provider == "g0":
-            self._client = g0_client or ZeroGBidClient(
-                api_key=g0_api_key,
-                base_url=g0_base_url,
-                model=g0_model,
-                temperature=anthropic_temperature,
-                timeout_seconds=request_timeout_seconds,
-            )
-            return
-        raise RuntimeError(f"Unsupported bid LLM provider: {provider}")
+        if provider != "g0":
+            raise RuntimeError(f"Unsupported bid LLM provider: {provider}. Only 'g0' is supported")
+        self._client = g0_client or ZeroGBidClient(
+            api_key=g0_api_key,
+            base_url=g0_base_url,
+            model=g0_model,
+            temperature=temperature,
+            timeout_seconds=request_timeout_seconds,
+        )
 
     async def decide_bid(self, context: BidPricingInput) -> BidDecision:
         return await self._client.decide_bid(context)
