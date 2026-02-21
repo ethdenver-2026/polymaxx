@@ -17,6 +17,7 @@ from ..clients.polymarket.gamma import GammaClient
 from ..models.models import Base
 from ..config import get_settings, CITIES
 from ..publishing.websocket_signal_broadcaster import SignalBroadcaster
+from ..reputation import ReputationStore
 from ..data.polymarket_registry import MarketRegistry
 from ..clients.weather.open_meteo import OpenMeteoClient
 from ..data.polymarket_price_tracker import PriceTracker
@@ -51,14 +52,22 @@ class ProducerOrchestrator:
         db_path: str = DEFAULT_DB_PATH,
         cities: list[str] | None = None,
         poll_interval: int = 10,
-        forecast_interval: int = 6 * 60 * 60,
-        edge_threshold: float = 0.08,
+        forecast_interval: int | None = None,
+        edge_threshold: float | None = None,
     ):
         self._db_path = db_path
         self._cities = cities or list(CITIES.keys())
         self._poll_interval = poll_interval
-        self._forecast_interval = forecast_interval
-        self._edge_threshold = edge_threshold
+
+        # Pick defaults from settings based on trading mode
+        settings = get_settings()
+        self._forecast_interval = forecast_interval or settings.forecast_interval_seconds
+        if edge_threshold is not None:
+            self._edge_threshold = edge_threshold
+        elif settings.trading_mode == "paper":
+            self._edge_threshold = settings.paper_edge_threshold_pct / 100
+        else:
+            self._edge_threshold = settings.edge_threshold_pct / 100
 
         # Components (initialized in start())
         self._engine: "Engine | None" = None
@@ -87,7 +96,7 @@ class ProducerOrchestrator:
         self._open_meteo = OpenMeteoClient()
 
         # Broadcaster
-        self._broadcaster = SignalBroadcaster()
+        self._broadcaster = SignalBroadcaster(reputation_store=ReputationStore())
 
         # Price tracker
         self._price_tracker = PriceTracker(registry=self._registry)
@@ -109,9 +118,6 @@ class ProducerOrchestrator:
             engine=self._engine,
             edge_threshold=self._edge_threshold,
             forecast_interval=self._forecast_interval,
-            llm_pricing_mode=settings.llm_pricing_mode,
-            zg_ws_uri=settings.zg_ws_uri,
-            llm_temperature=settings.llm_temperature,
             signal_preview_ttl_minutes=settings.signal_preview_ttl_minutes,
             producer_id=settings.polymarket_wallet_address or "anonymous",
         )

@@ -8,6 +8,9 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from threading import Lock
+
+from signal_schema.addressing import normalize_evm_address
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "consumer_signals.db"
 
@@ -25,7 +28,10 @@ _SCHEMA_COLUMNS: dict[str, str] = {
     "horizon_hours": "REAL",
     "metadata_json": "TEXT",
     "strategy_checks": "TEXT",
+    "auction_id": "TEXT",
 }
+_DB_INITIALIZED = False
+_DB_INIT_LOCK = Lock()
 
 
 def subscribe() -> queue.Queue[dict]:
@@ -57,9 +63,15 @@ def _notify(signal_row: dict) -> None:
 
 def init_db() -> None:
     """Create consumer tables if they don't exist."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("""
+    global _DB_INITIALIZED
+    if _DB_INITIALIZED:
+        return
+    with _DB_INIT_LOCK:
+        if _DB_INITIALIZED:
+            return
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS consumer_signal_log (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             received_at REAL    NOT NULL,
@@ -72,8 +84,8 @@ def init_db() -> None:
             order_id    TEXT,
             errors      TEXT
         )
-    """)
-    conn.execute("""
+        """)
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS consumer_auction_log (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             received_at         REAL    NOT NULL,
@@ -93,28 +105,113 @@ def init_db() -> None:
             metadata_json       TEXT,
             raw_message_json    TEXT    NOT NULL
         )
-    """)
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS consumer_reputation_events (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            received_at         REAL    NOT NULL,
+            consumer_did        TEXT    NOT NULL,
+            auction_id          TEXT,
+            reason              TEXT    NOT NULL,
+            negative_delta      INTEGER NOT NULL
+        )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_auction_id "
+            "ON consumer_auction_log (auction_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_received_at "
+            "ON consumer_auction_log (received_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_outcome "
+            "ON consumer_auction_log (outcome)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_rep_events_consumer_did "
+            "ON consumer_reputation_events (consumer_did)"
+        )
+        # Idempotent migration: add columns that don't exist yet
+        existing_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(consumer_signal_log)").fetchall()
+        }
+        for name, sql_type in _SCHEMA_COLUMNS.items():
+            if name not in existing_cols:
+                conn.execute(
+                    f"ALTER TABLE consumer_signal_log ADD COLUMN {name} {sql_type}"
+                )
+        conn.commit()
+        conn.close()
+        _DB_INITIALIZED = True
+
+
+def _normalize_wallet_address(wallet_address: str) -> str:
+    try:
+        return normalize_evm_address(wallet_address)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
+def derive_consumer_did_pkh(*, chain_id: int, wallet_address: str) -> str:
+    normalized_address = _normalize_wallet_address(wallet_address)
+    return f"did:pkh:eip155:{chain_id}:{normalized_address}"
+
+
+def validate_consumer_did_wallet_binding(
+    *,
+    consumer_did: str,
+    wallet_address: str,
+    chain_id: int,
+) -> str:
+    expected = derive_consumer_did_pkh(chain_id=chain_id, wallet_address=wallet_address)
+    candidate = consumer_did.strip().lower()
+    if candidate and candidate != expected:
+        raise RuntimeError(
+            "Configured consumer_did does not match wallet-bound did:pkh. "
+            f"expected={expected} got={consumer_did}"
+        )
+    return expected
+
+
+def record_consumer_payment_failure(*, consumer_did: str, auction_id: str, reason: str) -> None:
+    now = time.time()
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_auction_id ON consumer_auction_log (auction_id)"
+        """
+        INSERT INTO consumer_reputation_events
+            (received_at, consumer_did, auction_id, reason, negative_delta)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (now, consumer_did, auction_id, reason, 1),
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_received_at ON consumer_auction_log (received_at)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_outcome ON consumer_auction_log (outcome)"
-    )
-    # Idempotent migration: add columns that don't exist yet
-    existing_cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(consumer_signal_log)").fetchall()
-    }
-    for name, sql_type in _SCHEMA_COLUMNS.items():
-        if name not in existing_cols:
-            conn.execute(
-                f"ALTER TABLE consumer_signal_log ADD COLUMN {name} {sql_type}"
-            )
     conn.commit()
     conn.close()
+
+
+def get_consumer_reputation(consumer_did: str) -> dict:
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(negative_delta), 0)
+        FROM consumer_reputation_events
+        WHERE consumer_did = ?
+        """,
+        (consumer_did,),
+    ).fetchone()
+    conn.close()
+    negative_reputation = int(row[0] or 0)
+    return {"consumer_did": consumer_did, "negative_reputation": negative_reputation}
+
+
+def is_consumer_reputation_sufficient(consumer_did: str, threshold: int = 5) -> bool:
+    if threshold <= 0:
+        raise RuntimeError(f"Invalid reputation threshold: {threshold}")
+    rep = get_consumer_reputation(consumer_did)
+    return int(rep["negative_reputation"]) < threshold
 
 
 def log_auction_event(
@@ -174,40 +271,72 @@ def log_auction_event(
 
 
 def get_auction_events(limit: int = 100) -> list[dict]:
-    """Return recent auction events from consumer_auction_log."""
+    """Return recent auctions, collapsed to one row per auction_id.
+
+    Each row merges all lifecycle events (bid_submitted → won_offer →
+    payment_succeeds etc.) into a single summary with the final outcome.
+    Smoke/seeded data is always excluded.
+    """
     init_db()
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT * FROM consumer_auction_log ORDER BY received_at DESC LIMIT ?",
-        (limit,),
+        "SELECT * FROM consumer_auction_log ORDER BY received_at ASC",
     ).fetchall()
     conn.close()
-    return [
-        {
-            "id": row["id"],
-            "received_at": row["received_at"],
-            "auction_id": row["auction_id"],
-            "consumer_did": row["consumer_did"],
-            "producer_did": row["producer_did"],
-            "event_id": row["event_id"],
-            "bid_amount": row["bid_amount"],
-            "auction_end_utc": row["auction_end_utc"],
-            "outcome": row["outcome"],
-            "rejection_reason": row["rejection_reason"],
-            "winner_did": row["winner_did"],
-            "winning_paid_amount": row["winning_paid_amount"],
-            "payment_url": row["payment_url"],
-            "x402_network": row["x402_network"],
-            "x402_asset": row["x402_asset"],
-            "metadata": json.loads(row["metadata_json"]) if row["metadata_json"] else None,
-            "raw_message": json.loads(row["raw_message_json"]),
-        }
-        for row in rows
-    ]
+
+    # Group events by auction_id, merging into a single row per auction.
+    auctions: dict[str, dict] = {}
+    for row in rows:
+        raw = json.loads(row["raw_message_json"])
+        if raw.get("smoke"):
+            continue  # always skip seeded data
+
+        aid = row["auction_id"]
+        if aid not in auctions:
+            auctions[aid] = {
+                "id": row["id"],
+                "received_at": row["received_at"],
+                "auction_id": aid,
+                "consumer_did": row["consumer_did"],
+                "producer_did": None,
+                "event_id": None,
+                "bid_amount": None,
+                "auction_end_utc": None,
+                "outcome": row["outcome"],
+                "rejection_reason": None,
+                "winner_did": None,
+                "winning_paid_amount": None,
+                "payment_url": None,
+            }
+
+        entry = auctions[aid]
+        # Always update to the latest outcome
+        entry["outcome"] = row["outcome"]
+        # Merge non-null fields from later events
+        if row["producer_did"]:
+            entry["producer_did"] = row["producer_did"]
+        if row["event_id"]:
+            entry["event_id"] = row["event_id"]
+        if row["bid_amount"]:
+            entry["bid_amount"] = row["bid_amount"]
+        if row["auction_end_utc"]:
+            entry["auction_end_utc"] = row["auction_end_utc"]
+        if row["rejection_reason"]:
+            entry["rejection_reason"] = row["rejection_reason"]
+        if row["winner_did"]:
+            entry["winner_did"] = row["winner_did"]
+        if row["winning_paid_amount"]:
+            entry["winning_paid_amount"] = row["winning_paid_amount"]
+        if row["payment_url"]:
+            entry["payment_url"] = row["payment_url"]
+
+    # Return most-recent-first, limited
+    result = sorted(auctions.values(), key=lambda a: a["received_at"], reverse=True)
+    return result[:limit]
 
 
-def log_signal(signal_data: dict, response: dict) -> None:
+def log_signal(signal_data: dict, response: dict, *, auction_id: str | None = None) -> None:
     """Persist a signal and its processing result, then notify subscribers."""
     now = time.time()
     init_db()
@@ -217,8 +346,9 @@ def log_signal(signal_data: dict, response: dict) -> None:
         """
         INSERT INTO consumer_signal_log
             (received_at, signal_json, action, signal_price, live_price,
-             signal_edge, live_edge, order_id, errors, strategy_checks)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             signal_edge, live_edge, order_id, errors, strategy_checks,
+             auction_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             now,
@@ -231,6 +361,7 @@ def log_signal(signal_data: dict, response: dict) -> None:
             response.get("order_id"),
             json.dumps(response.get("errors", [])),
             json.dumps(strategy_checks) if strategy_checks else None,
+            auction_id,
         ),
     )
     conn.commit()
@@ -248,12 +379,27 @@ def log_signal(signal_data: dict, response: dict) -> None:
 
 
 def get_signals(limit: int = 100) -> list[dict]:
-    """Retrieve recent signals from the log."""
+    """Retrieve recent signals with joined auction metadata."""
     init_db()
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT * FROM consumer_signal_log ORDER BY received_at DESC LIMIT ?",
+        """
+        SELECT s.*,
+               a.bid_amount  AS auction_bid_amount,
+               a.outcome     AS auction_outcome,
+               a.winning_paid_amount AS auction_paid_amount
+        FROM consumer_signal_log s
+        LEFT JOIN (
+            SELECT auction_id, bid_amount, outcome, winning_paid_amount,
+                   ROW_NUMBER() OVER (PARTITION BY auction_id ORDER BY received_at DESC) AS rn
+            FROM consumer_auction_log
+            WHERE outcome IN ('payment_succeeds', 'AuctionBidRejected',
+                              'AuctionLossNotice', 'AuctionNoWinner', 'bid_skipped')
+        ) a ON s.auction_id = a.auction_id AND a.rn = 1
+        ORDER BY s.received_at DESC
+        LIMIT ?
+        """,
         (limit,),
     ).fetchall()
     conn.close()
@@ -262,12 +408,23 @@ def get_signals(limit: int = 100) -> list[dict]:
     for row in rows:
         signal = json.loads(row["signal_json"])
         raw_checks = row["strategy_checks"] if "strategy_checks" in row.keys() else None
+
+        # Extract from canonical ProducerSignal format
+        exchange = signal.get("exchanges", [{}])[0] if signal.get("exchanges") else {}
+        metadata = signal.get("metadata", {})
+
+        # Build description from market_description or legacy description field
+        description = (
+            exchange.get("market_description")
+            or signal.get("description", "")
+        )
+
         results.append({
             "id": row["id"],
             "received_at": row["received_at"],
-            "description": signal.get("description", ""),
-            "token_id": signal.get("token_id", ""),
-            "side": signal.get("side", "buy"),
+            "description": description,
+            "token_id": exchange.get("token_id") or signal.get("token_id", ""),
+            "side": exchange.get("side") or signal.get("side", "buy"),
             "model_probability": signal.get("model_probability"),
             "position_size_usd": signal.get("position_size_usd"),
             "action": row["action"],
@@ -278,6 +435,13 @@ def get_signals(limit: int = 100) -> list[dict]:
             "order_id": row["order_id"],
             "errors": json.loads(row["errors"]) if row["errors"] else [],
             "strategy_checks": json.loads(raw_checks) if raw_checks else None,
+            "city": metadata.get("city"),
+            "event_id": exchange.get("event_id"),
+            "edge": exchange.get("edge"),
+            "auction_id": row["auction_id"],
+            "bid_amount": row["auction_bid_amount"],
+            "auction_outcome": row["auction_outcome"],
+            "paid_amount": row["auction_paid_amount"],
         })
     return results
 
@@ -331,6 +495,21 @@ def get_executed_notional_usd() -> float:
             FROM consumer_signal_log
             WHERE action IN ('executed', 'simulated')
         ) AS signal_json_extract
+        """
+    ).fetchone()
+    conn.close()
+    return float(row[0] or 0.0)
+
+
+def get_auction_spend_usd() -> float:
+    """Return total USDC spent on successful auction payments."""
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(bid_amount), 0.0)
+        FROM consumer_auction_log
+        WHERE outcome = 'payment_succeeds'
         """
     ).fetchone()
     conn.close()

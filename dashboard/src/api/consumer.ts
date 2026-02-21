@@ -43,10 +43,6 @@ export async function getAuctions(): Promise<AuctionEvent[]> {
   return res.json();
 }
 
-export async function runAuctionSmoke(): Promise<{ ok: boolean; auctions_created?: number; events_created?: number; error?: string }> {
-  const res = await fetch("/api/auctions/smoke", { method: "POST" });
-  return res.json();
-}
 
 export async function getPaperPositions(): Promise<PaperPosition[]> {
   const res = await fetch("/api/paper-positions");

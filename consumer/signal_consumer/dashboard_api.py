@@ -120,10 +120,7 @@ def set_mode(body: TradingModeRequest):
 
 @app.get("/api/auctions")
 def auctions(limit: int = 100):
-    events = get_auction_events(limit=limit)
-    if get_trading_mode() != "paper":
-        events = [e for e in events if not (e.get("raw_message") or {}).get("smoke")]
-    return events
+    return get_auction_events(limit=limit)
 
 
 @app.post("/api/auctions/smoke")

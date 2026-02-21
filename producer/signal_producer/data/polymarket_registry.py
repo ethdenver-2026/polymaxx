@@ -93,11 +93,23 @@ class MarketRegistry:
                         high_temp=m.high_temp,
                         yes_token_id=m.yes_token_id,
                         no_token_id=m.no_token_id,
+                        yes_price=m.yes_price,
+                        no_price=m.no_price,
                     )
                     cached_markets[m.yes_token_id] = cached_market
                     cached_markets[m.no_token_id] = cached_market
                     self._token_to_event[m.yes_token_id] = db_event.event_id
                     self._token_to_event[m.no_token_id] = db_event.event_id
+
+                    # Seed in-memory price cache from DB
+                    if m.yes_price is not None:
+                        self._prices[m.yes_token_id] = CachedPrice(
+                            price=m.yes_price, timestamp="db_seed",
+                        )
+                    if m.no_price is not None:
+                        self._prices[m.no_token_id] = CachedPrice(
+                            price=m.no_price, timestamp="db_seed",
+                        )
 
                 self._events[db_event.event_id] = CachedEvent(
                     event_id=db_event.event_id,
@@ -171,6 +183,18 @@ class MarketRegistry:
                 cached_markets[market.no_token_id] = cached_market
                 self._token_to_event[market.yes_token_id] = event.event_id
                 self._token_to_event[market.no_token_id] = event.event_id
+
+                # Seed in-memory price cache from Gamma API prices so signal
+                # generator can work even before CLOB websocket delivers updates
+                now_ts = datetime.now(UTC).isoformat()
+                if market.yes_price is not None:
+                    self._prices[market.yes_token_id] = CachedPrice(
+                        price=market.yes_price, timestamp=now_ts,
+                    )
+                if market.no_price is not None:
+                    self._prices[market.no_token_id] = CachedPrice(
+                        price=market.no_price, timestamp=now_ts,
+                    )
 
             session.commit()
 

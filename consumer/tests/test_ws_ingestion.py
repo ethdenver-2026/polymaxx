@@ -6,11 +6,25 @@ from collections import deque
 
 from signal_consumer.bid_pricing import BidDecision
 from signal_consumer.config import Settings
-from signal_consumer.ws_ingestion import _submit_bid_for_preview, handle_raw_ws_message
+from signal_consumer.ws_ingestion import (
+    _submit_bid_for_preview,
+    determine_bid_for_preview,
+    handle_raw_ws_message,
+)
 
 
 def _settings(**overrides: object) -> Settings:
-    base: dict[str, object] = {"trading_mode": "paper", "bankroll_usdc": 50.0}
+    wallet = "0x0000000000000000000000000000000000000001"
+    base: dict[str, object] = {
+        "trading_mode": "paper",
+        "bankroll_usdc": 50.0,
+        "consumer_wallet_address": wallet,
+        "payment_wallet_address": wallet,
+        "trading_wallet_address": wallet,
+        "payment_wallet_private_key": "0x" + "1" * 64,
+        "trading_wallet_private_key": "0x" + "1" * 64,
+        "consumer_did": f"did:pkh:eip155:137:{wallet}",
+    }
     base.update(overrides)
     return Settings(**base)
 
@@ -110,11 +124,14 @@ def test_submit_bid_preview_handles_rejection(monkeypatch):
         "signal_consumer.ws_ingestion.websockets.connect",
         lambda _: _FakeConnectContext(),
     )
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.is_consumer_reputation_sufficient",
+        lambda _did, threshold=5: True,
+    )
     monkeypatch.setattr("signal_consumer.ws_ingestion.log_auction_event", lambda **_: None)
     settings = _settings(
-        consumer_did="did:kite:test/consumer-a",
-        consumer_wallet_address="0xabc",
-        consumer_default_bid_amount=2.5,
+        consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
+        consumer_wallet_address="0x0000000000000000000000000000000000000001",
     )
     async def _fake_bid_decision(*_args, **_kwargs):
         return BidDecision(should_bid=True, bid_amount=2.5, rationale="ok")
@@ -146,13 +163,20 @@ def test_submit_bid_preview_skips_when_llm_says_do_not_bid(monkeypatch):
     async def _fake_no_bid(*_args, **_kwargs):
         return BidDecision(should_bid=False, bid_amount=0.0, rationale="insufficient edge")
 
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.is_consumer_reputation_sufficient",
+        lambda _did, threshold=5: True,
+    )
     monkeypatch.setattr("signal_consumer.ws_ingestion.determine_bid_for_preview", _fake_no_bid)
     monkeypatch.setattr("signal_consumer.ws_ingestion.log_auction_event", _fake_log_auction_event)
 
     result = asyncio.run(
         _submit_bid_for_preview(
             preview_payload,
-            _settings(consumer_did="did:kite:test/consumer-a", consumer_wallet_address="0xabc"),
+            _settings(
+                consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
+                consumer_wallet_address="0x0000000000000000000000000000000000000001",
+            ),
         )
     )
 
@@ -219,6 +243,10 @@ def test_submit_bid_preview_sends_payment_failure_when_x402_fails(monkeypatch):
         "signal_consumer.ws_ingestion.websockets.connect",
         lambda _: _FakeConnectContext(),
     )
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.is_consumer_reputation_sufficient",
+        lambda _did, threshold=5: True,
+    )
     monkeypatch.setattr("signal_consumer.ws_ingestion.log_auction_event", lambda **_: None)
     async def _fake_bid(*_args, **_kwargs):
         return BidDecision(should_bid=True, bid_amount=2.0, rationale="ok")
@@ -231,10 +259,169 @@ def test_submit_bid_preview_sends_payment_failure_when_x402_fails(monkeypatch):
     result = asyncio.run(
         _submit_bid_for_preview(
             preview_payload,
-            _settings(consumer_did="did:kite:test/consumer-a", consumer_wallet_address="0xabc"),
+            _settings(
+                consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
+                consumer_wallet_address="0x0000000000000000000000000000000000000001",
+            ),
         )
     )
     assert result["action"] == "AuctionNoWinner"
     payment_messages = [m for m in outbound_messages if m.get("type") == "AuctionPaymentResult"]
     assert payment_messages
     assert payment_messages[-1]["payment_success"] is False
+
+
+def test_submit_bid_preview_rejects_when_reputation_insufficient(monkeypatch):
+    preview_payload = {
+        "type": "SignalPreviewMessage",
+        "auction_id": "auction-1",
+        "producer_did": "did:kite:producer/default/weather-v1",
+        "exchanges": [{"event_id": "evt-1", "edge": 0.11}],
+        "last_price_paid": 1.2,
+        "model_probability": 0.6,
+        "confidence": 0.7,
+    }
+    events: list[dict] = []
+
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.is_consumer_reputation_sufficient",
+        lambda _did, threshold=5: False,
+    )
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.log_auction_event",
+        lambda **kwargs: events.append(kwargs),
+    )
+    result = asyncio.run(
+        _submit_bid_for_preview(
+            preview_payload,
+            _settings(
+                consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
+                consumer_wallet_address="0x0000000000000000000000000000000000000001",
+                chain_id=137,
+            ),
+        )
+    )
+    assert result["action"] == "InsufficientReputation"
+    assert any(event.get("outcome") == "insufficient_reputation" for event in events)
+
+
+def test_submit_bid_preview_uses_llm_decision_amount_end_to_end(monkeypatch):
+    preview_payload = {
+        "type": "SignalPreviewMessage",
+        "auction_id": "auction-llm",
+        "producer_did": "did:kite:producer/default/weather-v1",
+        "exchanges": [{"event_id": "evt-llm", "edge": 0.21}],
+        "last_price_paid": 1.2,
+        "model_probability": 0.75,
+        "confidence": 0.83,
+    }
+    outbound_messages: list[dict] = []
+
+    class _FakeBidSocket:
+        def __init__(self):
+            self._responses = deque(
+                [
+                    json.dumps(
+                        {
+                            "type": "AuctionBidRejected",
+                            "auction_id": "auction-llm",
+                            "reason": "auction_elapsed",
+                        }
+                    )
+                ]
+            )
+
+        async def send(self, message: str):
+            outbound_messages.append(json.loads(message))
+
+        async def recv(self) -> str:
+            return self._responses.popleft()
+
+    class _FakeConnectContext:
+        async def __aenter__(self):
+            return _FakeBidSocket()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _FakeBalances:
+        polymarket_usdc = 0.0
+        onchain_usdc = 0.0
+        onchain_pol = 1.0
+
+    class _FakeRouter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def decide_bid(self, _context):
+            # Deliberately over max bid to verify normalization path.
+            return BidDecision(should_bid=True, bid_amount=9.5, rationale="strong edge")
+
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.websockets.connect",
+        lambda _: _FakeConnectContext(),
+    )
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.is_consumer_reputation_sufficient",
+        lambda _did, threshold=5: True,
+    )
+    monkeypatch.setattr("signal_consumer.ws_ingestion.get_balances", lambda **_kwargs: _FakeBalances())
+    monkeypatch.setattr(
+        "signal_consumer.ws_ingestion.get_payment_usdc_balance",
+        lambda **_kwargs: 100.0,
+    )
+    monkeypatch.setattr("signal_consumer.ws_ingestion.BidLlmRouter", _FakeRouter)
+    monkeypatch.setattr("signal_consumer.ws_ingestion.log_auction_event", lambda **_: None)
+
+    result = asyncio.run(
+        _submit_bid_for_preview(
+            preview_payload,
+            _settings(
+                consumer_did="did:pkh:eip155:137:0x0000000000000000000000000000000000000001",
+                consumer_wallet_address="0x0000000000000000000000000000000000000001",
+                bid_llm_max_bid_amount_usdc=5.0,
+            ),
+        )
+    )
+    assert result["action"] == "AuctionBidRejected"
+    assert outbound_messages
+    assert outbound_messages[0]["type"] == "AuctionBidMessage"
+    # Bid amount should be produced by LLM path then normalized to max.
+    assert outbound_messages[0]["bid_amount"] == 5.0
+
+
+def test_determine_bid_for_preview_skips_when_polygon_pol_below_threshold(monkeypatch):
+    preview_payload = {
+        "type": "SignalPreviewMessage",
+        "auction_id": "auction-pol-gate",
+        "producer_did": "did:kite:producer/default/weather-v1",
+        "exchanges": [{"event_id": "evt-pol", "edge": 0.25}],
+        "last_price_paid": 1.0,
+        "model_probability": 0.8,
+        "confidence": 0.9,
+    }
+
+    class _LowPolBalances:
+        polymarket_usdc = 0.0
+        onchain_usdc = 0.0
+        onchain_pol = 0.0
+
+    class _FailIfCalledRouter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def decide_bid(self, _context):
+            raise AssertionError("LLM should not be called when POL gate fails")
+
+    monkeypatch.setattr("signal_consumer.ws_ingestion.get_balances", lambda **_kwargs: _LowPolBalances())
+    monkeypatch.setattr("signal_consumer.ws_ingestion.BidLlmRouter", _FailIfCalledRouter)
+
+    decision = asyncio.run(
+        determine_bid_for_preview(
+            preview_payload,
+            _settings(min_polygon_pol_for_bidding=0.01),
+        )
+    )
+    assert decision.should_bid is False
+    assert decision.bid_amount == 0.0
+    assert "insufficient_polygon_pol" in decision.rationale
