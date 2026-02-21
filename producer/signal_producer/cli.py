@@ -3,8 +3,12 @@
 import asyncio
 from datetime import date, timedelta
 
+from dotenv import load_dotenv
 import typer
 import structlog
+
+# Load .env file before anything else
+load_dotenv()
 
 from .config import get_settings, CITIES, DEFAULT_CITIES
 

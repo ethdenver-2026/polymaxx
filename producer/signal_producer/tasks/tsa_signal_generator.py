@@ -80,6 +80,13 @@ class TSASignalGeneratorTask:
     def _setup_tsa_predictor(self, tsa_project_path: str) -> None:
         """Setup import path for TSA predictor."""
         path = Path(tsa_project_path)
+        logger.info(
+            "Setting up TSA predictor",
+            path=tsa_project_path,
+            path_exists=path.exists(),
+            src_exists=(path / "src").exists() if path.exists() else False,
+            predict_exists=(path / "src" / "predict.py").exists() if path.exists() else False,
+        )
         if path.exists():
             sys.path.insert(0, str(path))
             try:
@@ -91,15 +98,16 @@ class TSASignalGeneratorTask:
                     "get_prediction": get_prediction,
                     "prediction_to_signal": prediction_to_signal,
                 }
-                logger.info("TSA predictor loaded", path=tsa_project_path)
+                logger.info("TSA predictor loaded successfully", path=tsa_project_path)
             except ImportError as e:
-                logger.warning(
-                    "TSA predictor not available",
+                logger.error(
+                    "TSA predictor import failed",
                     path=tsa_project_path,
                     error=str(e),
+                    error_type=type(e).__name__,
                 )
         else:
-            logger.warning("TSA project path not found", path=tsa_project_path)
+            logger.error("TSA project path does not exist", path=tsa_project_path)
 
     @property
     def last_price_paid_usd(self) -> float:
@@ -155,7 +163,11 @@ class TSASignalGeneratorTask:
     def _get_tsa_prediction(self, target_date: Any) -> dict | None:
         """Get prediction from external TSA predictor."""
         if not self._predictor:
-            logger.debug("TSA predictor not available")
+            logger.debug(
+                "TSA predictor not available - was setup called?",
+                tsa_project_path=self._tsa_project_path,
+                predictor_is_none=self._predictor is None,
+            )
             return None
 
         try:
