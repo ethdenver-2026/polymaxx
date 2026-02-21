@@ -29,6 +29,9 @@ DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "consumer_sig
 _subscribers: list[queue.Queue[dict]] = []
 _subscribers_lock = threading.Lock()
 _SCHEMA_COLUMNS: dict[str, str] = {
+    "signal_id": "TEXT",
+    "state": "TEXT",
+    "consumer_did": "TEXT",
     "source_created_at": "TEXT",
     "source_published_at": "TEXT",
     "decision_status": "TEXT",
@@ -39,6 +42,17 @@ _SCHEMA_COLUMNS: dict[str, str] = {
     "metadata_json": "TEXT",
     "strategy_checks": "TEXT",
     "auction_id": "TEXT",
+    "producer_did": "TEXT",
+    "event_id": "TEXT",
+    "winner_did": "TEXT",
+    "winning_paid_amount": "REAL",
+    "bid_amount": "REAL",
+    "decision_rationale": "TEXT",
+    "preview_received_at": "REAL",
+    "bid_submitted_at": "REAL",
+    "signal_received_at": "REAL",
+    "auction_result_received_at": "REAL",
+    "updated_at": "REAL",
 }
 _AUCTION_SCHEMA_COLUMNS: dict[str, str] = {
     "event_title": "TEXT",
@@ -79,11 +93,7 @@ def _notify(signal_row: dict) -> None:
 def init_db() -> None:
     """Create consumer tables if they don't exist."""
     global _DB_INITIALIZED
-    if _DB_INITIALIZED:
-        return
     with _DB_INIT_LOCK:
-        if _DB_INITIALIZED:
-            return
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(DB_PATH))
         conn.execute("""
@@ -200,6 +210,19 @@ def init_db() -> None:
                 conn.execute(
                     f"ALTER TABLE consumer_signal_log ADD COLUMN {name} {sql_type}"
                 )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_signal_log_auction_id "
+            "ON consumer_signal_log (auction_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_signal_log_auction_consumer "
+            "ON consumer_signal_log (auction_id, consumer_did)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_consumer_signal_log_signal_id_unique "
+            "ON consumer_signal_log (signal_id) "
+            "WHERE signal_id IS NOT NULL"
+        )
         # Idempotent migration: add columns that don't exist yet (auction log)
         existing_auction_cols = {
             row[1]
@@ -470,6 +493,275 @@ def log_signal(signal_data: dict, response: dict, *, auction_id: str | None = No
     })
 
 
+def _require_non_empty(value: str | None, field: str) -> str:
+    if value is None:
+        raise RuntimeError(f"{field} is required")
+    cleaned = value.strip()
+    if not cleaned:
+        raise RuntimeError(f"{field} must be non-empty")
+    return cleaned
+
+
+def get_signal_id_for_auction_id(auction_id: str, *, consumer_did: str | None = None) -> str | None:
+    """Return the latest signal_id for an auction_id (optionally scoped by consumer_did)."""
+    aid = _require_non_empty(auction_id, "auction_id")
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    if consumer_did is not None:
+        did = _require_non_empty(consumer_did, "consumer_did")
+        row = conn.execute(
+            """
+            SELECT signal_id
+            FROM consumer_signal_log
+            WHERE auction_id = ?
+              AND consumer_did = ?
+              AND signal_id IS NOT NULL
+            ORDER BY received_at DESC
+            LIMIT 1
+            """,
+            (aid, did),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT signal_id
+            FROM consumer_signal_log
+            WHERE auction_id = ?
+              AND signal_id IS NOT NULL
+            ORDER BY received_at DESC
+            LIMIT 1
+            """,
+            (aid,),
+        ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    return str(row[0])
+
+
+def create_signal_lifecycle(
+    *,
+    signal_id: str,
+    auction_id: str,
+    consumer_did: str,
+    preview_payload: dict,
+    producer_did: str | None = None,
+    event_id: str | None = None,
+) -> int:
+    """Create a lifecycle row as soon as SignalPreviewMessage is received."""
+    sid = _require_non_empty(signal_id, "signal_id")
+    aid = _require_non_empty(auction_id, "auction_id")
+    did = _require_non_empty(consumer_did, "consumer_did")
+    if not isinstance(preview_payload, dict) or not preview_payload:
+        raise RuntimeError("preview_payload must be a non-empty dict")
+
+    now = time.time()
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    cur = conn.execute(
+        """
+        INSERT INTO consumer_signal_log
+            (
+                received_at, updated_at, preview_received_at,
+                consumer_did,
+                signal_id, auction_id, state, action,
+                signal_json, errors,
+                producer_did, event_id
+            )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            now,
+            now,
+            now,
+            did,
+            sid,
+            aid,
+            "preview_received",
+            "pending",
+            json.dumps(preview_payload),
+            json.dumps([]),
+            producer_did,
+            event_id,
+        ),
+    )
+    conn.commit()
+    row_id = int(cur.lastrowid)
+    conn.close()
+
+    _notify(
+        {
+            "id": row_id,
+            "signal_id": sid,
+            "auction_id": aid,
+            "received_at": now,
+            "action": "pending",
+            "state": "preview_received",
+            "token_id": "",
+        }
+    )
+    return row_id
+
+
+def update_signal_lifecycle(
+    *,
+    signal_id: str | None = None,
+    auction_id: str | None = None,
+    consumer_did: str | None = None,
+    state: str | None = None,
+    action: str | None = None,
+    signal_payload: dict | None = None,
+    signal_price: float | None = None,
+    live_price: float | None = None,
+    signal_edge: float | None = None,
+    live_edge: float | None = None,
+    order_id: str | None = None,
+    errors: list[str] | None = None,
+    producer_did: str | None = None,
+    event_id: str | None = None,
+    winner_did: str | None = None,
+    winning_paid_amount: float | None = None,
+    bid_amount: float | None = None,
+    decision_rationale: str | None = None,
+) -> None:
+    """
+    Update a lifecycle row identified by signal_id or auction_id.
+
+    Raises RuntimeError when identifier is missing, no fields are supplied,
+    or the target row does not exist.
+    """
+    where_sql = ""
+    where_params: list[str] = []
+    if signal_id:
+        where_sql = "signal_id = ?"
+        where_params.append(_require_non_empty(signal_id, "signal_id"))
+        if consumer_did is not None:
+            where_sql += " AND consumer_did = ?"
+            where_params.append(_require_non_empty(consumer_did, "consumer_did"))
+    elif auction_id:
+        where_sql = "auction_id = ? AND consumer_did = ?"
+        where_params.append(_require_non_empty(auction_id, "auction_id"))
+        where_params.append(_require_non_empty(consumer_did, "consumer_did"))
+    else:
+        raise RuntimeError("Either signal_id or auction_id is required for update_signal_lifecycle")
+
+    if signal_payload is not None and not isinstance(signal_payload, dict):
+        raise RuntimeError("signal_payload must be a dict when provided")
+    if errors is not None and not isinstance(errors, list):
+        raise RuntimeError("errors must be a list[str] when provided")
+
+    now = time.time()
+    updates: list[str] = []
+    params: list[object] = []
+
+    def _set(name: str, value: object) -> None:
+        updates.append(f"{name} = ?")
+        params.append(value)
+
+    if state is not None:
+        _set("state", state)
+        if state == "preview_received":
+            _set("preview_received_at", now)
+        if state == "bid_submitted":
+            _set("bid_submitted_at", now)
+        if state in {"signal_received", "executed", "simulated", "skipped", "error"}:
+            _set("signal_received_at", now)
+        if state.startswith("auction_") or state in {
+            "AuctionBidRejected",
+            "AuctionLossNotice",
+            "AuctionNoWinner",
+            "auction_result",
+            "payment_succeeds",
+            "payment_failed",
+        }:
+            _set("auction_result_received_at", now)
+    if action is not None:
+        _set("action", action)
+    if signal_payload is not None:
+        _set("signal_json", json.dumps(signal_payload))
+    if signal_price is not None:
+        _set("signal_price", signal_price)
+    if live_price is not None:
+        _set("live_price", live_price)
+    if signal_edge is not None:
+        _set("signal_edge", signal_edge)
+    if live_edge is not None:
+        _set("live_edge", live_edge)
+    if order_id is not None:
+        _set("order_id", order_id)
+    if errors is not None:
+        _set("errors", json.dumps(errors))
+    if producer_did is not None:
+        _set("producer_did", producer_did)
+    if event_id is not None:
+        _set("event_id", event_id)
+    if winner_did is not None:
+        _set("winner_did", winner_did)
+    if winning_paid_amount is not None:
+        _set("winning_paid_amount", winning_paid_amount)
+    if bid_amount is not None:
+        _set("bid_amount", bid_amount)
+    if decision_rationale is not None:
+        _set("decision_rationale", decision_rationale)
+
+    if not updates:
+        raise RuntimeError("No update fields provided to update_signal_lifecycle")
+
+    _set("updated_at", now)
+
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    cur = conn.execute(
+        f"UPDATE consumer_signal_log SET {', '.join(updates)} WHERE {where_sql}",
+        (*params, *where_params),
+    )
+    if cur.rowcount == 0:
+        conn.close()
+        ident = f"signal_id={where_params[0]}" if signal_id else f"auction_id={where_params[0]} consumer_did={where_params[1]}"
+        raise RuntimeError(
+            f"No consumer_signal_log row found for {ident}"
+        )
+
+    row = conn.execute(
+        f"""
+        SELECT id, signal_id, auction_id, action, state, signal_json
+        FROM consumer_signal_log
+        WHERE {where_sql}
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        tuple(where_params),
+    ).fetchone()
+    conn.commit()
+    conn.close()
+
+    token_id = ""
+    if row and row[5]:
+        try:
+            payload = json.loads(row[5])
+            if isinstance(payload, dict):
+                exchanges = payload.get("exchanges")
+                if isinstance(exchanges, list) and exchanges and isinstance(exchanges[0], dict):
+                    token_id = str(exchanges[0].get("token_id") or "")
+                if not token_id:
+                    token_id = str(payload.get("token_id") or "")
+        except Exception:
+            token_id = ""
+
+    if row:
+        _notify(
+            {
+                "id": row[0],
+                "signal_id": row[1],
+                "auction_id": row[2],
+                "received_at": now,
+                "action": row[3],
+                "state": row[4],
+                "token_id": token_id,
+            }
+        )
+
+
 def get_signals(limit: int = 100) -> list[dict]:
     """Retrieve recent signals with joined auction metadata."""
     init_db()
@@ -480,14 +772,15 @@ def get_signals(limit: int = 100) -> list[dict]:
         SELECT s.*,
                a.bid_amount  AS auction_bid_amount,
                a.outcome     AS auction_outcome,
-               a.winning_paid_amount AS auction_paid_amount
+               a.winning_paid_amount AS auction_paid_amount,
+               a.winner_did AS auction_winner_did
         FROM consumer_signal_log s
         LEFT JOIN (
-            SELECT auction_id, bid_amount, outcome, winning_paid_amount,
+            SELECT auction_id, bid_amount, outcome, winning_paid_amount, winner_did,
                    ROW_NUMBER() OVER (PARTITION BY auction_id ORDER BY received_at DESC) AS rn
             FROM consumer_auction_log
             WHERE outcome IN ('payment_succeeds', 'AuctionBidRejected',
-                              'AuctionLossNotice', 'AuctionNoWinner', 'bid_skipped')
+                              'AuctionLossNotice', 'AuctionNoWinner', 'bid_skipped', 'auction_result')
         ) a ON s.auction_id = a.auction_id AND a.rn = 1
         ORDER BY s.received_at DESC
         LIMIT ?
@@ -529,8 +822,22 @@ def get_signals(limit: int = 100) -> list[dict]:
             if m:
                 market_label = m.group(1)
 
+        merged_bid_amount = row["bid_amount"] if "bid_amount" in row.keys() and row["bid_amount"] is not None else row["auction_bid_amount"]
+        merged_outcome = row["state"] if "state" in row.keys() and row["state"] else row["auction_outcome"]
+        merged_paid_amount = (
+            row["winning_paid_amount"]
+            if "winning_paid_amount" in row.keys() and row["winning_paid_amount"] is not None
+            else row["auction_paid_amount"]
+        )
+        merged_winner_did = (
+            row["winner_did"]
+            if "winner_did" in row.keys() and row["winner_did"]
+            else row["auction_winner_did"]
+        )
+
         results.append({
             "id": row["id"],
+            "signal_id": row["signal_id"] if "signal_id" in row.keys() and row["signal_id"] else f"signal-{row['id']}",
             "received_at": row["received_at"],
             "description": description,
             "event_title": event_title,
@@ -540,6 +847,7 @@ def get_signals(limit: int = 100) -> list[dict]:
             "model_probability": signal.get("model_probability"),
             "position_size_usd": signal.get("position_size_usd"),
             "action": row["action"],
+            "state": row["state"] if "state" in row.keys() else None,
             "signal_price": row["signal_price"],
             "live_price": row["live_price"],
             "signal_edge": row["signal_edge"],
@@ -551,9 +859,10 @@ def get_signals(limit: int = 100) -> list[dict]:
             "event_id": exchange.get("event_id"),
             "edge": exchange.get("edge"),
             "auction_id": row["auction_id"],
-            "bid_amount": row["auction_bid_amount"],
-            "auction_outcome": row["auction_outcome"],
-            "paid_amount": row["auction_paid_amount"],
+            "bid_amount": merged_bid_amount,
+            "auction_outcome": merged_outcome,
+            "paid_amount": merged_paid_amount,
+            "winner_did": merged_winner_did,
         })
     return results
 

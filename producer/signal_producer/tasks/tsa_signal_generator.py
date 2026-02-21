@@ -73,6 +73,7 @@ class TSASignalGeneratorTask:
         # Setup TSA project path for importing predictor
         self._tsa_project_path = tsa_project_path
         self._predictor = None
+        self._prediction_disabled_reason: str | None = None
 
         if tsa_project_path:
             self._setup_tsa_predictor(tsa_project_path)
@@ -92,8 +93,19 @@ class TSASignalGeneratorTask:
             try:
                 # TSA project has get_prediction in src/predict.py
                 # and prediction_to_signal in src/signal.py
-                from src.predict import get_prediction
+                from src.predict import FEATURES_PATH, get_prediction
                 from src.signal import prediction_to_signal
+                if not FEATURES_PATH.exists():
+                    self._prediction_disabled_reason = (
+                        f"Missing TSA features file at {FEATURES_PATH}. "
+                        "Build it first (e.g. run_all_experiments.py)."
+                    )
+                    logger.error(
+                        "TSA predictor disabled",
+                        reason=self._prediction_disabled_reason,
+                        path=tsa_project_path,
+                    )
+                    return
                 self._predictor = {
                     "get_prediction": get_prediction,
                     "prediction_to_signal": prediction_to_signal,
@@ -106,8 +118,14 @@ class TSASignalGeneratorTask:
                     error=str(e),
                     error_type=type(e).__name__,
                 )
+                self._prediction_disabled_reason = (
+                    f"TSA predictor import failed: {e}"
+                )
         else:
             logger.error("TSA project path does not exist", path=tsa_project_path)
+            self._prediction_disabled_reason = (
+                f"TSA project path does not exist: {tsa_project_path}"
+            )
 
     @property
     def last_price_paid_usd(self) -> float:
@@ -162,6 +180,9 @@ class TSASignalGeneratorTask:
 
     def _get_tsa_prediction(self, target_date: Any) -> dict | None:
         """Get prediction from external TSA predictor."""
+        if self._prediction_disabled_reason:
+            return None
+
         if not self._predictor:
             logger.debug(
                 "TSA predictor not available - was setup called?",
@@ -175,11 +196,19 @@ class TSASignalGeneratorTask:
             prediction = get_prediction(target_date)
             return prediction
         except Exception as e:
-            logger.warning(
-                "TSA prediction failed",
-                target_date=str(target_date),
-                error=str(e),
-            )
+            error_msg = str(e)
+            if "Features not found at" in error_msg:
+                self._prediction_disabled_reason = (
+                    f"TSA predictor disabled after feature load failure: {error_msg}"
+                )
+                logger.error(
+                    "TSA predictor disabled",
+                    target_date=str(target_date),
+                    reason=self._prediction_disabled_reason,
+                )
+                return None
+
+            logger.warning("TSA prediction failed", target_date=str(target_date), error=error_msg)
             return None
 
     def _build_producer_signal(
@@ -393,6 +422,14 @@ class TSASignalGeneratorTask:
             interval_seconds=self._signal_interval,
             edge_threshold=f"{self._edge_threshold:.0%}",
         )
+
+        if self._prediction_disabled_reason:
+            logger.error(
+                "TSA signal generator stopped",
+                reason=self._prediction_disabled_reason,
+            )
+            self._running = False
+            return
 
         # Wait for price tracker to populate initial prices
         await asyncio.sleep(5)
