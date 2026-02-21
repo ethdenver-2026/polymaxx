@@ -8,7 +8,7 @@ Coordinates all async tasks:
 
 import asyncio
 import signal
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import structlog
 from sqlalchemy import create_engine
@@ -120,6 +120,7 @@ class ProducerOrchestrator:
             forecast_interval=self._forecast_interval,
             signal_preview_ttl_minutes=settings.signal_preview_ttl_minutes,
             producer_id=settings.polymarket_wallet_address or "anonymous",
+            price_ready=self._price_tracker.ready,
         )
 
         logger.info(
@@ -199,6 +200,25 @@ class ProducerOrchestrator:
         finally:
             self._running = False
             logger.info("Producer orchestrator stopped")
+
+    async def run_with_server(self, app: "Any", host: str, port: str) -> None:
+        """Initialize components, wire broadcaster, and run pipeline + HTTP server."""
+        import uvicorn
+        from ..ws_server import set_broadcaster
+
+        self._init_components()
+        set_broadcaster(self.broadcaster)
+
+        server = uvicorn.Server(
+            uvicorn.Config(app, host=host, port=port, log_level="info")
+        )
+        server_task = asyncio.create_task(server.serve())
+        self._setup_signal_handlers()
+        try:
+            await self._run_tasks()
+        finally:
+            server.should_exit = True
+            await server_task
 
     @property
     def registry(self) -> MarketRegistry | None:

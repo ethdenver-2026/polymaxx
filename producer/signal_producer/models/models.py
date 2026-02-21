@@ -141,7 +141,6 @@ class SignalRecord(Base):
     metadata_json = Column(Text)  # Strategy-specific data as JSON
 
 
-
 def get_engine(db_path: str = "data/bot.db"):
     """Create database engine."""
     return create_engine(f"sqlite:///{db_path}")

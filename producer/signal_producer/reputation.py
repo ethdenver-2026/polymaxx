@@ -8,7 +8,14 @@ import structlog
 
 logger = structlog.get_logger()
 
-BLACKLIST_THRESHOLD = int(os.getenv("REPUTATION_BLACKLIST_THRESHOLD", "3"))
+try:
+    BLACKLIST_THRESHOLD = int(os.getenv("REPUTATION_BLACKLIST_THRESHOLD", "3"))
+except (ValueError, TypeError):
+    logger.warning(
+        "Invalid REPUTATION_BLACKLIST_THRESHOLD, using default=3",
+        raw_value=os.getenv("REPUTATION_BLACKLIST_THRESHOLD"),
+    )
+    BLACKLIST_THRESHOLD = 3
 
 
 class ReputationStore:
@@ -24,7 +31,11 @@ class ReputationStore:
         return count
 
     def record_payment_success(self, consumer_did: str) -> None:
-        pass
+        """Decay failure count on successful payment (floor at 0)."""
+        current = self._failures.get(consumer_did, 0)
+        if current > 0:
+            self._failures[consumer_did] = current - 1
+            logger.info("Payment success recorded, failure count decayed", consumer_did=consumer_did, failures=current - 1)
 
     def is_blacklisted(self, consumer_did: str) -> bool:
         return self._failures.get(consumer_did, 0) >= BLACKLIST_THRESHOLD

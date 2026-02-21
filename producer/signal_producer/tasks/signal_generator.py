@@ -58,6 +58,7 @@ class SignalGeneratorTask:
         forecast_interval: int = DEFAULT_FORECAST_INTERVAL,
         signal_preview_ttl_minutes: int = 30,
         producer_id: str = "",
+        price_ready: asyncio.Event | None = None,
     ):
         self._registry = registry
         self._open_meteo = open_meteo_client
@@ -66,6 +67,7 @@ class SignalGeneratorTask:
         self._edge_threshold = edge_threshold
         self._forecast_interval = forecast_interval
         self._running = False
+        self._price_ready = price_ready
 
         self._preview_ttl_minutes = signal_preview_ttl_minutes
         self._producer_id = producer_id
@@ -350,7 +352,13 @@ class SignalGeneratorTask:
         )
 
         # Wait for price tracker to populate initial prices
-        await asyncio.sleep(15)
+        if self._price_ready is not None:
+            try:
+                await asyncio.wait_for(self._price_ready.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                logger.warning("Price tracker not ready after 60s, proceeding anyway")
+        else:
+            await asyncio.sleep(15)
 
         while self._running:
             await self._generate_once()

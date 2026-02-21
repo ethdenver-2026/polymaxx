@@ -42,6 +42,12 @@ class PriceTracker:
         self._running = False
         self._ws = None
         self._subscribed_tokens: set[str] = set()
+        self._ready = asyncio.Event()
+
+    @property
+    def ready(self) -> asyncio.Event:
+        """Fires once the first price update has been received."""
+        return self._ready
 
     def _build_subscription_message(self, token_ids: list[str]) -> dict[str, Any]:
         """Build websocket subscription message."""
@@ -102,6 +108,9 @@ class PriceTracker:
                     )
 
                 if updates:
+                    if not self._ready.is_set():
+                        self._ready.set()
+                        logger.info("Price tracker ready (first prices received)")
                     logger.debug(
                         "Price updates received",
                         count=len(updates),

@@ -336,9 +336,8 @@ def producer(
 ):
     """Run full producer pipeline + WebSocket server."""
     import os
-    import uvicorn
     from .tasks.orchestrator import ProducerOrchestrator
-    from .ws_server import app as ws_app, set_broadcaster
+    from .ws_server import app as ws_app
 
     os.makedirs("data", exist_ok=True)
     cities = [c.strip() for c in cities_opt.split(",")] if cities_opt else None
@@ -354,19 +353,7 @@ def producer(
 
     async def _run() -> None:
         orchestrator = ProducerOrchestrator(db_path=db_path, cities=cities)
-        orchestrator._init_components()
-        set_broadcaster(orchestrator.broadcaster)
-
-        server = uvicorn.Server(
-            uvicorn.Config(ws_app, host=host, port=port, log_level="info")
-        )
-        server_task = asyncio.create_task(server.serve())
-        orchestrator._setup_signal_handlers()
-        try:
-            await orchestrator._run_tasks()
-        finally:
-            server.should_exit = True
-            await server_task
+        await orchestrator.run_with_server(ws_app, host=host, port=port)
 
     asyncio.run(_run())
 
