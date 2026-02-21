@@ -1,0 +1,371 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://signal-market.local/schemas/bid-response.schema.json",
+  "title": "Bid Channel Responses",
+  "description": "Messages sent by producer to consumer on /ws/bids.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/AuctionBidAccepted"
+    },
+    {
+      "$ref": "#/$defs/AuctionBidRejected"
+    },
+    {
+      "$ref": "#/$defs/AuctionWinNotice"
+    },
+    {
+      "$ref": "#/$defs/AuctionPaymentStatus"
+    },
+    {
+      "$ref": "#/$defs/AuctionLossNotice"
+    },
+    {
+      "$ref": "#/$defs/AuctionNoWinner"
+    },
+    {
+      "$ref": "#/$defs/SignalMessage"
+    }
+  ],
+  "$defs": {
+    "IsoDateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "AuctionBidAccepted": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "consumer_did",
+        "bid_amount",
+        "sent_at"
+      ],
+      "properties": {
+        "type": {
+          "const": "AuctionBidAccepted"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string"
+        },
+        "consumer_did": {
+          "type": "string"
+        },
+        "bid_amount": {
+          "type": "number"
+        },
+        "sent_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        }
+      }
+    },
+    "AuctionBidRejected": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "consumer_did",
+        "reason",
+        "sent_at"
+      ],
+      "properties": {
+        "type": {
+          "const": "AuctionBidRejected"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string"
+        },
+        "consumer_did": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "auction_not_found",
+            "auction_already_closed",
+            "auction_elapsed",
+            "unknown_consumer"
+          ]
+        },
+        "sent_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        }
+      }
+    },
+    "AuctionWinNotice": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "consumer_did",
+        "bid_amount",
+        "x402_payment_url",
+        "payment_timeout_seconds",
+        "sent_at"
+      ],
+      "properties": {
+        "type": {
+          "const": "AuctionWinNotice"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string"
+        },
+        "consumer_did": {
+          "type": "string"
+        },
+        "bid_amount": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "x402_payment_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "payment_timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "sent_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        }
+      }
+    },
+    "AuctionPaymentStatus": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "consumer_did",
+        "status",
+        "sent_at"
+      ],
+      "properties": {
+        "type": {
+          "const": "AuctionPaymentStatus"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string"
+        },
+        "consumer_did": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "PAYMENT_FAILED",
+            "PAYMENT_SUCCEEDS"
+          ]
+        },
+        "sent_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        }
+      }
+    },
+    "AuctionLossNotice": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "winner_did",
+        "paid_amount",
+        "sent_at"
+      ],
+      "properties": {
+        "type": {
+          "const": "AuctionLossNotice"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string"
+        },
+        "winner_did": {
+          "type": "string"
+        },
+        "paid_amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "sent_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        }
+      }
+    },
+    "AuctionNoWinner": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "reason",
+        "sent_at"
+      ],
+      "properties": {
+        "type": {
+          "const": "AuctionNoWinner"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string"
+        },
+        "reason": {
+          "const": "bidder_list_exhausted"
+        },
+        "sent_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        }
+      }
+    },
+    "SignalExchangeFull": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "exchange",
+        "event_id",
+        "token_id",
+        "side",
+        "market_description",
+        "resolution_source",
+        "market_price",
+        "edge",
+        "price_timestamp"
+      ],
+      "properties": {
+        "exchange": {
+          "const": "polymarket"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "token_id": {
+          "type": "string"
+        },
+        "side": {
+          "type": "string",
+          "enum": [
+            "yes",
+            "no"
+          ]
+        },
+        "market_description": {
+          "type": "string"
+        },
+        "resolution_source": {
+          "type": "string"
+        },
+        "market_price": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "edge": {
+          "type": "number"
+        },
+        "price_timestamp": {
+          "type": "string"
+        }
+      }
+    },
+    "SignalMessagePayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "signal_type",
+        "model_probability",
+        "confidence",
+        "forecast_source",
+        "forecast_time",
+        "metadata",
+        "exchanges"
+      ],
+      "properties": {
+        "signal_type": {
+          "const": "weather"
+        },
+        "model_probability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "forecast_source": {
+          "type": "string",
+          "enum": [
+            "open_meteo",
+            "noaa"
+          ]
+        },
+        "forecast_time": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "exchanges": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/SignalExchangeFull"
+          }
+        }
+      }
+    },
+    "SignalMessage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "signal",
+        "sent_at"
+      ],
+      "properties": {
+        "type": {
+          "const": "SignalMessage"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string"
+        },
+        "signal": {
+          "$ref": "#/$defs/SignalMessagePayload"
+        },
+        "sent_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        }
+      }
+    }
+  }
+}

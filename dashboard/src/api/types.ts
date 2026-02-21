@@ -112,3 +112,19 @@ export interface GenerateSignalResponse {
   signals_found: number;
   errors: string[];
 }
+
+export interface AuctionEvent {
+  id: number;
+  received_at: number;
+  auction_id: string;
+  consumer_did: string;
+  producer_did: string | null;
+  event_id: string | null;
+  bid_amount: number | null;
+  auction_end_utc: string | null;
+  outcome: string;
+  rejection_reason: string | null;
+  winner_did: string | null;
+  winning_paid_amount: number | null;
+  payment_url: string | null;
+}

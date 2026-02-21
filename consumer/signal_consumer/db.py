@@ -1,9 +1,4 @@
-"""
-SQLite persistence for consumer signal log.
-
-Stores every signal received by the consumer along with the action taken
-(executed, skipped, error) and price/edge details at execution time.
-"""
+"""SQLite persistence for consumer signal and auction logs."""
 
 from __future__ import annotations
 
@@ -61,7 +56,7 @@ def _notify(signal_row: dict) -> None:
 
 
 def init_db() -> None:
-    """Create the consumer_signal_log table if it doesn't exist."""
+    """Create consumer tables if they don't exist."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("""
@@ -78,6 +73,36 @@ def init_db() -> None:
             errors      TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS consumer_auction_log (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            received_at         REAL    NOT NULL,
+            auction_id          TEXT    NOT NULL,
+            consumer_did        TEXT    NOT NULL,
+            producer_did        TEXT,
+            event_id            TEXT,
+            bid_amount          REAL,
+            auction_end_utc     TEXT,
+            outcome             TEXT    NOT NULL,
+            rejection_reason    TEXT,
+            winner_did          TEXT,
+            winning_paid_amount REAL,
+            payment_url         TEXT,
+            x402_network        TEXT,
+            x402_asset          TEXT,
+            metadata_json       TEXT,
+            raw_message_json    TEXT    NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_auction_id ON consumer_auction_log (auction_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_received_at ON consumer_auction_log (received_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_outcome ON consumer_auction_log (outcome)"
+    )
     # Idempotent migration: add columns that don't exist yet
     existing_cols = {
         row[1]
@@ -90,6 +115,96 @@ def init_db() -> None:
             )
     conn.commit()
     conn.close()
+
+
+def log_auction_event(
+    *,
+    auction_id: str,
+    consumer_did: str,
+    outcome: str,
+    raw_message: dict,
+    producer_did: str | None = None,
+    event_id: str | None = None,
+    bid_amount: float | None = None,
+    auction_end_utc: str | None = None,
+    rejection_reason: str | None = None,
+    winner_did: str | None = None,
+    winning_paid_amount: float | None = None,
+    payment_url: str | None = None,
+    x402_network: str | None = None,
+    x402_asset: str | None = None,
+    metadata: dict | None = None,
+) -> None:
+    """Persist a single auction lifecycle event."""
+    now = time.time()
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute(
+        """
+        INSERT INTO consumer_auction_log
+            (
+                received_at, auction_id, consumer_did, producer_did, event_id,
+                bid_amount, auction_end_utc, outcome, rejection_reason, winner_did,
+                winning_paid_amount, payment_url, x402_network, x402_asset,
+                metadata_json, raw_message_json
+            )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            now,
+            auction_id,
+            consumer_did,
+            producer_did,
+            event_id,
+            bid_amount,
+            auction_end_utc,
+            outcome,
+            rejection_reason,
+            winner_did,
+            winning_paid_amount,
+            payment_url,
+            x402_network,
+            x402_asset,
+            json.dumps(metadata) if metadata else None,
+            json.dumps(raw_message),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_auction_events(limit: int = 100) -> list[dict]:
+    """Return recent auction events from consumer_auction_log."""
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM consumer_auction_log ORDER BY received_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "id": row["id"],
+            "received_at": row["received_at"],
+            "auction_id": row["auction_id"],
+            "consumer_did": row["consumer_did"],
+            "producer_did": row["producer_did"],
+            "event_id": row["event_id"],
+            "bid_amount": row["bid_amount"],
+            "auction_end_utc": row["auction_end_utc"],
+            "outcome": row["outcome"],
+            "rejection_reason": row["rejection_reason"],
+            "winner_did": row["winner_did"],
+            "winning_paid_amount": row["winning_paid_amount"],
+            "payment_url": row["payment_url"],
+            "x402_network": row["x402_network"],
+            "x402_asset": row["x402_asset"],
+            "metadata": json.loads(row["metadata_json"]) if row["metadata_json"] else None,
+            "raw_message": json.loads(row["raw_message_json"]),
+        }
+        for row in rows
+    ]
 
 
 def log_signal(signal_data: dict, response: dict) -> None:

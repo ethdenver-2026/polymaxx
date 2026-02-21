@@ -1,16 +1,18 @@
-"""Signal types for the producer."""
+"""Signal type contracts for producer messaging."""
 
-from .types import (
-    AuctionBidMessage,
-    AuctionBidRejected,
+from .producer_signal import (
     ForecastSource,
     PolymarketInfo,
-    PreviewPolymarketInfo,
     ProducerSignal,
-    ProducerSignalPreview,
-    SignalPreviewMessage,
     SignalType,
     WeatherMetadata,
+)
+from .producer_signal_preview import (
+    AuctionBidMessage,
+    AuctionBidRejected,
+    PreviewPolymarketInfo,
+    ProducerSignalPreview,
+    SignalPreviewMessage,
 )
 
 __all__ = [

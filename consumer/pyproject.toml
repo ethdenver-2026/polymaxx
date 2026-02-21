@@ -4,28 +4,26 @@ version = "0.1.0"
 description = "Signal consumer for prediction market trading"
 requires-python = ">=3.12"
 dependencies = [
+    # Shared schema
+    "signal-schema",
     # HTTP client
     "httpx[http2]>=0.28.0",
-
     # Validation
     "pydantic==2.12.5",
     "pydantic-settings==2.13.1",
-
     # Dashboard API
     "fastapi>=0.129.0",
     "uvicorn[standard]>=0.41.0",
-
     # Polymarket trading
     "py-clob-client>=0.34.5",
-
     # Logging
     "structlog>=25.0.0",
-
     # WebSocket server
     "websockets>=14.0",
-
     # Utilities
     "python-dotenv>=1.0.0",
+    "anthropic>=0.83.0",
+    "openai>=2.21.0",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +39,9 @@ signal-consumer = "signal_consumer.run:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+signal-schema = { path = "../shared", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
