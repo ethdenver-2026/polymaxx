@@ -117,9 +117,10 @@ def _start_consumer_process(
     env.update(
         {
             "CONSUMER_DID": did,
-            "CONSUMER_WALLET_ADDRESS": "0xabc",
+            "CONSUMER_WALLET_ADDRESS": "0x0000000000000000000000000000000000000abc",
             "CONSUMER_DEFAULT_BID_AMOUNT": str(bid_amount),
             "CONSUMER_PAYMENT_AUTO_SUCCEEDS": "true" if payment_success else "false",
+            "BID_LLM_PROVIDER": "mock",
             "PRODUCER_WS_URL": f"ws://{host}:{port}/ws/signals",
             "PRODUCER_BID_WS_URL": f"ws://{host}:{port}/ws/bids",
         }

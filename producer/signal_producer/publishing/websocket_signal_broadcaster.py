@@ -13,6 +13,7 @@ import structlog
 from fastapi import WebSocket
 
 from ..models.models import SignalRecord
+from ..reputation import ReputationStore
 from ..signals.types import (
     AuctionBidRejected,
     ProducerSignal,
@@ -36,7 +37,7 @@ def _json_safe(value: Any) -> Any:
 class SignalBroadcaster:
     """Tracks active websocket clients and runs preview/bid auctions."""
 
-    def __init__(self) -> None:
+    def __init__(self, reputation_store: ReputationStore | None = None) -> None:
         self._signal_connections: dict[str, WebSocket] = {}
         self._bid_connections: dict[str, WebSocket] = {}
         self._connection_lock = asyncio.Lock()
@@ -60,6 +61,7 @@ class SignalBroadcaster:
         if self._x402_mode == "x402_v2" and not self._x402_v2_url:
             # Self-hosted default endpoint for producer-owned x402_v2 flow.
             self._x402_v2_url = f"{self._public_base_url.rstrip('/')}/x402/v2/payment"
+        self._reputation = reputation_store
 
     async def connect(self, websocket: WebSocket, consumer_did: str) -> None:
         await websocket.accept()
@@ -264,6 +266,9 @@ class SignalBroadcaster:
             if consumer_did not in auction.expected_consumers:
                 await self._notify_bid_rejected(auction_id, consumer_did, "unknown_consumer")
                 return
+            if self._reputation and self._reputation.is_blacklisted(consumer_did):
+                await self._notify_bid_rejected(auction_id, consumer_did, "blacklisted")
+                return
             auction.bids[consumer_did] = float(bid_amount)
             auction.responded_consumers.add(consumer_did)
             all_responded = auction.responded_consumers >= auction.expected_consumers
@@ -374,6 +379,8 @@ class SignalBroadcaster:
             )
             success = await self._await_payment_result(auction_id, consumer_did)
             if not success:
+                if self._reputation:
+                    self._reputation.record_payment_failure(consumer_did)
                 await self._send_to_bidder(
                     consumer_did,
                     {
@@ -387,6 +394,8 @@ class SignalBroadcaster:
                 )
                 continue
 
+            if self._reputation:
+                self._reputation.record_payment_success(consumer_did)
             await self._send_to_bidder(
                 consumer_did,
                 {
@@ -409,6 +418,7 @@ class SignalBroadcaster:
                 },
             )
             await self._notify_losers(auction_id, winner_did=consumer_did, paid_amount=bid_amount)
+            await self._broadcast_auction_result(auction_id, winner_did=consumer_did, paid_amount=bid_amount)
             logger.info(
                 "Auction payment succeeded",
                 auction_id=auction_id,
@@ -418,6 +428,7 @@ class SignalBroadcaster:
             return
 
         await self._notify_all_no_winner(auction_id)
+        await self._broadcast_auction_result(auction_id, winner_did=None, paid_amount=None)
         logger.warning("Auction exhausted without payment success", auction_id=auction_id)
 
     async def _await_payment_result(self, auction_id: str, consumer_did: str) -> bool:
@@ -483,6 +494,20 @@ class SignalBroadcaster:
                 },
             )
 
+    async def _broadcast_auction_result(
+        self, auction_id: str, winner_did: str | None, paid_amount: float | None
+    ) -> None:
+        """Broadcast auction outcome to ALL signal-connected clients."""
+        payload = {
+            "type": "AuctionResultBroadcast",
+            "version": 1,
+            "auction_id": auction_id,
+            "winner_did": winner_did,
+            "paid_amount": paid_amount,
+            "sent_at": datetime.now(UTC).isoformat(),
+        }
+        await self._broadcast_payload(payload, market_id=auction_id, token_id="")
+
     async def _send_to_bidder(self, consumer_did: str, payload: dict[str, Any]) -> None:
         async with self._connection_lock:
             websocket = self._bid_connections.get(consumer_did)
@@ -516,4 +541,4 @@ class AuctionState:
     close_reason: str | None = None
 
 
-broadcaster = SignalBroadcaster()
+broadcaster = SignalBroadcaster()  # Default instance; orchestrator creates its own with reputation

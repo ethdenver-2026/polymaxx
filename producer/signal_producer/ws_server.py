@@ -8,6 +8,7 @@ import secrets
 import time
 import asyncio
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import httpx
 import structlog
@@ -18,11 +19,25 @@ from eth_account.messages import encode_defunct
 from signal_schema.addressing import normalize_evm_address
 
 from .main import run_once
-from .publishing.websocket_signal_broadcaster import broadcaster
+from .publishing.websocket_signal_broadcaster import broadcaster as _default_broadcaster
 from .signals.types import ProducerSignal
+
+if TYPE_CHECKING:
+    from .publishing.websocket_signal_broadcaster import SignalBroadcaster
 
 logger = structlog.get_logger()
 app = FastAPI(title="Signal Producer WebSocket Server", version="0.1.0")
+
+# The active broadcaster — defaults to the module-level singleton but can be
+# replaced by the orchestrator's broadcaster (which has reputation tracking).
+_active_broadcaster: SignalBroadcaster = _default_broadcaster
+
+
+def set_broadcaster(b: SignalBroadcaster) -> None:
+    """Replace the active broadcaster (called by orchestrator on startup)."""
+    global _active_broadcaster
+    _active_broadcaster = b
+    logger.info("WebSocket server broadcaster replaced by orchestrator instance")
 
 
 _SIWX_CHALLENGES: dict[str, dict[str, str | float]] = {}
@@ -267,7 +282,7 @@ async def process_x402_v2_payment(
             token_address=payload.token_address,
             min_token_amount_units=payload.token_amount_units,
         )
-        accepted = broadcaster.notify_payment_result(
+        accepted = _active_broadcaster.notify_payment_result(
             auction_id=payload.auction_id,
             consumer_did=payload.consumer_did,
             success=True,
@@ -337,37 +352,35 @@ async def broadcast_test_signal() -> dict[str, str]:
             }
         ],
     )
-    await broadcaster.broadcast_producer_signal(signal)
+    await _active_broadcaster.broadcast_producer_signal(signal)
     return {"status": "broadcasted"}
-
-
 @app.websocket("/ws/signals")
 async def signals_websocket(websocket: WebSocket) -> None:
     consumer_did = websocket.query_params.get("consumer_did") or f"anon-signal-{id(websocket)}"
-    await broadcaster.connect(websocket, consumer_did=consumer_did)
+    await _active_broadcaster.connect(websocket, consumer_did=consumer_did)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        await broadcaster.disconnect(consumer_did=consumer_did)
+        await _active_broadcaster.disconnect(consumer_did=consumer_did)
     except Exception as exc:
         logger.exception("websocket connection error", error=str(exc))
-        await broadcaster.disconnect(consumer_did=consumer_did)
+        await _active_broadcaster.disconnect(consumer_did=consumer_did)
 
 
 @app.websocket("/ws/bids")
 async def bids_websocket(websocket: WebSocket) -> None:
     consumer_did = websocket.query_params.get("consumer_did") or f"anon-bid-{id(websocket)}"
-    await broadcaster.connect_bid(websocket, consumer_did=consumer_did)
+    await _active_broadcaster.connect_bid(websocket, consumer_did=consumer_did)
     try:
         while True:
             payload = await websocket.receive_json()
-            await broadcaster.handle_bid_payload(payload, consumer_did=consumer_did)
+            await _active_broadcaster.handle_bid_payload(payload, consumer_did=consumer_did)
     except WebSocketDisconnect:
-        await broadcaster.disconnect_bid(consumer_did=consumer_did)
+        await _active_broadcaster.disconnect_bid(consumer_did=consumer_did)
     except Exception as exc:
         logger.exception("bid websocket connection error", error=str(exc), consumer_did=consumer_did)
-        await broadcaster.disconnect_bid(consumer_did=consumer_did)
+        await _active_broadcaster.disconnect_bid(consumer_did=consumer_did)
 
 
 def run_signal_server(host: str = "0.0.0.0", port: int = 8000) -> None:

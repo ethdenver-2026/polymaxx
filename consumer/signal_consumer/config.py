@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Trading controls
     trading_mode: Literal["paper", "live"] = Field(default="paper")
     edge_threshold_pct: float = Field(default=8.0, ge=0.0, le=100.0)
+    paper_edge_threshold_pct: float = Field(default=2.0, ge=0.0, le=100.0)
     kelly_fraction: float = Field(default=0.25, ge=0.0, le=1.0)
     max_slippage_abs: float = Field(default=0.05, ge=0.0, le=1.0)
     bankroll_usdc: float = Field(default=50.0, gt=0.0)
@@ -35,7 +36,7 @@ class Settings(BaseSettings):
     payment_wallet_private_key: str = Field(default="")
     consumer_bid_timeout_seconds: float = Field(default=25.0, ge=1.0)
     consumer_payment_auto_succeeds: bool = Field(default=True)
-    bid_llm_provider: Literal["anthropic", "g0"] = Field(default="anthropic")
+    bid_llm_provider: Literal["mock", "anthropic", "g0"] = Field(default="g0")
     bid_llm_temperature: float = Field(default=0.8, ge=0.0, le=1.0)
     bid_llm_max_bid_amount_usdc: float = Field(default=5.0, gt=0.0)
     bid_llm_request_timeout_seconds: float = Field(default=20.0, ge=1.0)
@@ -43,8 +44,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = Field(default="")
     anthropic_bid_model: str = Field(default="claude-sonnet-4-6")
     g0_api_key: str = Field(default="")
-    g0_base_url: str = Field(default="")
-    g0_bid_model: str = Field(default="")
+    g0_base_url: str = Field(default="https://0g-serving-broker.0g.ai/v1")
+    g0_bid_model: str = Field(default="meta-llama/Llama-3.3-70B-Instruct")
     x402_mode: Literal["kite", "x402_v2"] = Field(default="x402_v2")
     x402_v2_network: str = Field(default="base-sepolia")
     x402_v2_asset: str = Field(default="usdc")
@@ -81,6 +82,7 @@ class Settings(BaseSettings):
         "extra": "ignore",
     }
 
+    @model_validator(mode="after")
     def _validate_live_networks(self) -> "Settings":
         if self.trading_mode != "live":
             return self
