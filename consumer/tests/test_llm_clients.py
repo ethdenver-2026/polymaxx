@@ -19,6 +19,17 @@ def test_parse_bid_decision_json_rejects_missing_fields():
         parse_bid_decision_json('{"should_bid": true, "rationale": "missing amount"}')
 
 
+def test_parse_bid_decision_json_accepts_fenced_output():
+    raw = (
+        "Here is my decision:\\n"
+        "```json\\n"
+        '{"should_bid": true, "bid_amount": 2.0, "rationale": "good edge"}\\n'
+        "```"
+    )
+    parsed = parse_bid_decision_json(raw)
+    assert parsed == BidDecision(should_bid=True, bid_amount=2.0, rationale="good edge")
+
+
 def test_bid_llm_router_rejects_unknown_provider():
     with pytest.raises(RuntimeError, match="Unsupported bid LLM provider"):
         BidLlmRouter(provider="bad-provider", anthropic_api_key="x", anthropic_model="m")

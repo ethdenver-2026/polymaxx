@@ -36,6 +36,7 @@ def _settings(**overrides: object) -> Settings:
     base: dict[str, object] = {
         "trading_mode": "paper",
         "edge_threshold_pct": 8.0,
+        "paper_edge_threshold_pct": 8.0,
         "max_position_usd": 5.0,
         "bankroll_usdc": 50.0,
         "min_position_usd": 1.0,
@@ -62,10 +63,12 @@ def _canonical_payload() -> dict:
             {
                 "exchange": "polymarket",
                 "event_id": "evt-1",
+                "event_title": "Highest temperature in NYC on February 20?",
+                "resolution_source": "https://example.com",
+                "market_question": "Will NYC be 44-45F?",
+                "market_group_item_title": "44-45°F",
                 "token_id": "tok-yes-1",
                 "side": "yes",
-                "market_description": "Will NYC be 44-45F?",
-                "resolution_source": "https://example.com",
                 "market_price": 0.50,
                 "edge": 0.12,
                 "price_timestamp": "2026-02-19T00:01:00+00:00",

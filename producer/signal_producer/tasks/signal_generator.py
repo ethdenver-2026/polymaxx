@@ -14,7 +14,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from ..models.models import SignalRecord
-from ..signals.types import (
+from signal_schema import (
     ProducerSignal,
     ProducerSignalPreview,
     PreviewPolymarketInfo,
@@ -25,9 +25,9 @@ from ..config import CITIES
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
-    from ..registry.market_registry import MarketRegistry, CachedEvent, CachedMarket
-    from ..clients.open_meteo import OpenMeteoClient
-    from ..publishing.websocket import SignalBroadcaster
+    from ..data.polymarket_registry import MarketRegistry, CachedEvent, CachedMarket
+    from ..clients.weather.open_meteo import OpenMeteoClient
+    from ..publishing.websocket_signal_broadcaster import SignalBroadcaster
 
 logger = structlog.get_logger()
 
@@ -128,11 +128,16 @@ class SignalGeneratorTask:
 
         exchange_info: PolymarketInfo = {
             "exchange": "polymarket",
+            # Event level
             "event_id": event.event_id,
+            "event_title": event.title,
+            "resolution_source": event.resolution_source or "",
+            # Market level
+            "market_question": market.question,
+            "market_group_item_title": market.group_item_title or "",
+            # Trading info
             "token_id": market.yes_token_id if side == "yes" else market.no_token_id,
             "side": side,
-            "market_description": market.question,
-            "resolution_source": "",  # Could be fetched from DB
             "market_price": market_price,
             "edge": edge,
             "price_timestamp": market.price_timestamp or datetime.now(UTC).isoformat(),
@@ -279,8 +284,8 @@ class SignalGeneratorTask:
     def _build_preview(self, signal: ProducerSignal) -> ProducerSignalPreview:
         """Build a ProducerSignalPreview from a full ProducerSignal.
 
-        Strips market details (token_id, side, market_price, market_description,
-        resolution_source) — only includes event_id and edge.
+        Strips market details (token_id, side, market_price, market_question,
+        market_group_item_title, resolution_source) — only includes event_id and edge.
         """
         preview_exchanges: list[PreviewPolymarketInfo] = []
         for ex in signal.exchanges:

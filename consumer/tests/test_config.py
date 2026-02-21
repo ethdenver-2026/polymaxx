@@ -34,3 +34,17 @@ def test_get_settings_is_cached(monkeypatch):
     assert s1 is s2
     assert s2.env == "prod"
     config_module.get_settings.cache_clear()
+
+
+def test_x402_mode_accepts_known_values():
+    settings_kite = Settings(x402_mode="kite")
+    settings_v2 = Settings(x402_mode="x402_v2")
+    assert settings_kite.x402_mode == "kite"
+    assert settings_v2.x402_mode == "x402_v2"
+
+
+def test_reputation_storage_backend_accepts_known_values():
+    settings_local = Settings(reputation_storage_backend="local_db")
+    settings_stub = Settings(reputation_storage_backend="0g_stub")
+    assert settings_local.reputation_storage_backend == "local_db"
+    assert settings_stub.reputation_storage_backend == "0g_stub"

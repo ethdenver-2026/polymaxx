@@ -1,12 +1,12 @@
 """Tests for WebSocket broadcaster."""
 
 import asyncio
-
-import pytest
 from unittest.mock import AsyncMock
 
-from signal_producer.publishing.websocket import SignalBroadcaster
-from signal_producer.signals.types import ProducerSignal, WeatherMetadata, PolymarketInfo
+import pytest
+
+from signal_producer.publishing.websocket_signal_broadcaster import SignalBroadcaster
+from signal_schema import PolymarketInfo, ProducerSignal, WeatherMetadata
 
 
 @pytest.fixture
@@ -29,10 +29,12 @@ def sample_producer_signal():
     exchange_info: PolymarketInfo = {
         "exchange": "polymarket",
         "event_id": "213978",
+        "event_title": "Highest temperature in NYC on February 20?",
+        "resolution_source": "https://wunderground.com/...",
+        "market_question": "Will temp be 42-44°F?",
+        "market_group_item_title": "42-44°F",
         "token_id": "yes_token_123",
         "side": "yes",
-        "market_description": "Will temp be 42-44°F?",
-        "resolution_source": "https://wunderground.com/...",
         "market_price": 0.30,
         "edge": 0.35,
         "price_timestamp": "2026-02-20T12:00:00Z",
@@ -78,7 +80,7 @@ class TestSignalBroadcaster:
 
         assert payload["type"] == "SignalPreviewMessage"
         assert payload["signal_type"] == "weather"
-        assert payload["producer_did"].startswith("did:kite:")
+        assert payload["producer_did"].startswith("did:")
         assert payload["auction_id"]
         assert payload["auction_end_utc"]
         assert "published_at" in payload
@@ -127,7 +129,11 @@ class TestSignalBroadcaster:
         assert last_payload["type"] == "AuctionBidRejected"
 
     @pytest.mark.asyncio
-    async def test_ranked_payment_fallback_and_winner_delivery(self, broadcaster, sample_producer_signal):
+    async def test_ranked_payment_fallback_and_winner_delivery(
+        self,
+        broadcaster,
+        sample_producer_signal,
+    ):
         signal_ws_a = AsyncMock()
         signal_ws_a.accept = AsyncMock()
         signal_ws_a.send_json = AsyncMock()
@@ -172,7 +178,10 @@ class TestSignalBroadcaster:
             consumer_did=did_b,
         )
         await asyncio.sleep(0.05)
-        assert any(call[0][0]["type"] == "AuctionWinNotice" for call in bid_ws_a.send_json.call_args_list)
+        assert any(
+            call[0][0]["type"] == "AuctionWinNotice"
+            for call in bid_ws_a.send_json.call_args_list
+        )
 
         await broadcaster.handle_bid_payload(
             {
@@ -184,7 +193,10 @@ class TestSignalBroadcaster:
             consumer_did=did_a,
         )
         await asyncio.sleep(0.05)
-        assert any(call[0][0]["type"] == "AuctionWinNotice" for call in bid_ws_b.send_json.call_args_list)
+        assert any(
+            call[0][0]["type"] == "AuctionWinNotice"
+            for call in bid_ws_b.send_json.call_args_list
+        )
 
         await broadcaster.handle_bid_payload(
             {
@@ -197,8 +209,105 @@ class TestSignalBroadcaster:
         )
         await asyncio.sleep(0.05)
         assert any(
-            call[0][0]["type"] == "AuctionPaymentStatus" and call[0][0]["status"] == "PAYMENT_SUCCEEDS"
+            call[0][0]["type"] == "AuctionPaymentStatus"
+            and call[0][0]["status"] == "PAYMENT_SUCCEEDS"
             for call in bid_ws_b.send_json.call_args_list
         )
-        assert any(call[0][0]["type"] == "SignalMessage" for call in bid_ws_b.send_json.call_args_list)
-        assert any(call[0][0]["type"] == "AuctionLossNotice" for call in bid_ws_a.send_json.call_args_list)
+        assert any(
+            call[0][0]["type"] == "SignalMessage"
+            for call in bid_ws_b.send_json.call_args_list
+        )
+        assert any(
+            call[0][0]["type"] == "AuctionLossNotice"
+            for call in bid_ws_a.send_json.call_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_win_notice_uses_x402_v2_mode_when_configured(
+        self,
+        monkeypatch,
+        sample_producer_signal,
+    ):
+        monkeypatch.setenv("PRODUCER_X402_MODE", "x402_v2")
+        monkeypatch.setenv("PRODUCER_X402_V2_URL", "https://x402.v2.example/weather")
+        broadcaster = SignalBroadcaster()
+
+        signal_ws = AsyncMock()
+        signal_ws.accept = AsyncMock()
+        signal_ws.send_json = AsyncMock()
+        bid_ws = AsyncMock()
+        bid_ws.accept = AsyncMock()
+        bid_ws.send_json = AsyncMock()
+
+        did = "did:kite:test/consumer-a"
+        await broadcaster.connect(signal_ws, consumer_did=did)
+        await broadcaster.connect_bid(bid_ws, consumer_did=did)
+        await broadcaster.broadcast_producer_signal(sample_producer_signal)
+
+        preview = signal_ws.send_json.call_args_list[0][0][0]
+        auction_id = preview["auction_id"]
+        await broadcaster.handle_bid_payload(
+            {
+                "type": "AuctionBidMessage",
+                "auction_id": auction_id,
+                "consumer_did": did,
+                "bid_amount": 6.0,
+                "wallet_address": "0x1111111111111111111111111111111111111111",
+            },
+            consumer_did=did,
+        )
+        await asyncio.sleep(0.05)
+
+        win_notices = [
+            call[0][0]
+            for call in bid_ws.send_json.call_args_list
+            if call[0][0]["type"] == "AuctionWinNotice"
+        ]
+        assert win_notices
+        assert win_notices[0]["x402_mode"] == "x402_v2"
+        assert win_notices[0]["x402_payment_url"] == "https://x402.v2.example/weather"
+
+    @pytest.mark.asyncio
+    async def test_win_notice_uses_local_x402_v2_endpoint_by_default(
+        self,
+        monkeypatch,
+        sample_producer_signal,
+    ):
+        monkeypatch.setenv("PRODUCER_X402_MODE", "x402_v2")
+        monkeypatch.delenv("PRODUCER_X402_V2_URL", raising=False)
+        monkeypatch.setenv("PRODUCER_PUBLIC_BASE_URL", "http://127.0.0.1:8014")
+        broadcaster = SignalBroadcaster()
+
+        signal_ws = AsyncMock()
+        signal_ws.accept = AsyncMock()
+        signal_ws.send_json = AsyncMock()
+        bid_ws = AsyncMock()
+        bid_ws.accept = AsyncMock()
+        bid_ws.send_json = AsyncMock()
+
+        did = "did:kite:test/consumer-a"
+        await broadcaster.connect(signal_ws, consumer_did=did)
+        await broadcaster.connect_bid(bid_ws, consumer_did=did)
+        await broadcaster.broadcast_producer_signal(sample_producer_signal)
+
+        preview = signal_ws.send_json.call_args_list[0][0][0]
+        auction_id = preview["auction_id"]
+        await broadcaster.handle_bid_payload(
+            {
+                "type": "AuctionBidMessage",
+                "auction_id": auction_id,
+                "consumer_did": did,
+                "bid_amount": 6.0,
+                "wallet_address": "0x1111111111111111111111111111111111111111",
+            },
+            consumer_did=did,
+        )
+        await asyncio.sleep(0.05)
+
+        win_notice = next(
+            call[0][0]
+            for call in bid_ws.send_json.call_args_list
+            if call[0][0]["type"] == "AuctionWinNotice"
+        )
+        assert win_notice["x402_mode"] == "x402_v2"
+        assert win_notice["x402_payment_url"] == "http://127.0.0.1:8014/x402/v2/payment"

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from signal_consumer.config import Settings
-from signal_consumer.consumer_engine import process_signal_payload
+from signal_consumer.consumer_engine import get_available_balance_usdc, process_signal_payload
 
 
 def _canonical_payload() -> dict:
@@ -24,10 +24,12 @@ def _canonical_payload() -> dict:
             {
                 "exchange": "polymarket",
                 "event_id": "evt-3",
+                "event_title": "Highest temperature in NYC on February 20?",
+                "resolution_source": "https://example.com",
+                "market_question": "Will NYC be 44-45F?",
+                "market_group_item_title": "44-45°F",
                 "token_id": "tok-3",
                 "side": "yes",
-                "market_description": "Will NYC be 44-45F?",
-                "resolution_source": "https://example.com",
                 "market_price": 0.50,
                 "edge": 0.11,
                 "price_timestamp": "2026-02-19T00:01:00+00:00",
@@ -56,6 +58,11 @@ def _settings(**overrides: object) -> Settings:
         "bankroll_usdc": 50.0,
         "max_position_usd": 5.0,
         "min_position_usd": 1.0,
+        "x402_v2_chain_id": 8453,
+        "trading_wallet_address": "0x0000000000000000000000000000000000000001",
+        "trading_wallet_private_key": "0x" + "1" * 64,
+        "payment_wallet_address": "0x0000000000000000000000000000000000000001",
+        "payment_wallet_private_key": "0x" + "1" * 64,
     }
     base.update(overrides)
     return Settings(**base)
@@ -128,3 +135,28 @@ def test_process_signal_payload_accepts_canonical_producer_signal(monkeypatch):
     monkeypatch.setattr("signal_consumer.consumer_engine.get_live_price", lambda token_id, side: 0.51)
     response = process_signal_payload(_canonical_payload(), _settings(trading_mode="paper"))
     assert response["action"] == "simulated"
+
+
+def test_get_available_balance_live_mode_uses_consumer_polygon_balance(monkeypatch):
+    class _FakeBalances:
+        onchain_usdc = 3.5
+        polymarket_usdc = 1.25
+
+    captured: dict[str, str] = {}
+
+    def _fake_get_balances(*, private_key: str | None = None, wallet_address: str | None = None):
+        captured["private_key"] = private_key or ""
+        captured["wallet_address"] = wallet_address or ""
+        return _FakeBalances()
+
+    monkeypatch.setattr("signal_consumer.consumer_engine.get_balances", _fake_get_balances)
+    settings = _settings(
+        trading_mode="live",
+        trading_wallet_private_key="pk-test",
+        trading_wallet_address="0xc11102FEeC9C44f8f5B74751427867dAC53d00d5",
+    )
+
+    available = get_available_balance_usdc(settings)
+    assert available == 4.75
+    assert captured["private_key"] == "pk-test"
+    assert captured["wallet_address"] == "0xc11102FEeC9C44f8f5B74751427867dAC53d00d5"

@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime
 
-from signal_producer.signals.types import (
+from signal_schema import (
     WeatherMetadata,
     PolymarketInfo,
     ProducerSignal,
@@ -25,17 +25,25 @@ def test_weather_metadata_has_required_fields():
 def test_polymarket_info_has_required_fields():
     info: PolymarketInfo = {
         "exchange": "polymarket",
+        # Event level
         "event_id": "213978",
+        "event_title": "Highest temperature in NYC on February 20?",
+        "resolution_source": "https://wunderground.com/...",
+        # Market level
+        "market_question": "Will temp be 34-35F?",
+        "market_group_item_title": "34-35°F",
+        # Trading info
         "token_id": "abc123",
         "side": "yes",
-        "market_description": "Will temp be 34-35F?",
-        "resolution_source": "https://wunderground.com/...",
         "market_price": 0.35,
         "edge": 0.05,
         "price_timestamp": "2026-02-19T12:00:00Z",
     }
     assert info["exchange"] == "polymarket"
     assert info["side"] == "yes"
+    assert info["event_title"] == "Highest temperature in NYC on February 20?"
+    assert info["market_question"] == "Will temp be 34-35F?"
+    assert info["market_group_item_title"] == "34-35°F"
 
 
 def test_producer_signal_creation():
@@ -49,10 +57,12 @@ def test_producer_signal_creation():
     exchange: PolymarketInfo = {
         "exchange": "polymarket",
         "event_id": "213978",
+        "event_title": "Highest temperature in NYC on February 20?",
+        "resolution_source": "https://wunderground.com/...",
+        "market_question": "Will temp be 34-35F?",
+        "market_group_item_title": "34-35°F",
         "token_id": "abc123",
         "side": "yes",
-        "market_description": "Will temp be 34-35F?",
-        "resolution_source": "https://wunderground.com/...",
         "market_price": 0.35,
         "edge": 0.05,
         "price_timestamp": "2026-02-19T12:00:00Z",
@@ -82,10 +92,12 @@ def test_producer_signal_to_dict():
     exchange: PolymarketInfo = {
         "exchange": "polymarket",
         "event_id": "213978",
+        "event_title": "Highest temperature in NYC on February 20?",
+        "resolution_source": "https://wunderground.com/...",
+        "market_question": "Will temp be 34-35F?",
+        "market_group_item_title": "34-35°F",
         "token_id": "abc123",
         "side": "yes",
-        "market_description": "Will temp be 34-35F?",
-        "resolution_source": "https://wunderground.com/...",
         "market_price": 0.35,
         "edge": 0.05,
         "price_timestamp": "2026-02-19T12:00:00Z",

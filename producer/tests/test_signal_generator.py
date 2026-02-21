@@ -5,8 +5,8 @@ from datetime import date, datetime, UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from signal_producer.tasks.signal_generator import SignalGeneratorTask
-from signal_producer.signals.types import ProducerSignal, WeatherMetadata, PolymarketInfo
-from signal_producer.registry.market_registry import CachedEvent, CachedMarket
+from signal_schema import ProducerSignal, WeatherMetadata, PolymarketInfo
+from signal_producer.data.polymarket_registry import CachedEvent, CachedMarket
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def mock_open_meteo():
     client = AsyncMock()
 
     # Mock ensemble forecast - all members at 43°F (in the 42-44 range)
-    from signal_producer.clients.open_meteo import EnsembleForecast
+    from signal_producer.clients.weather.open_meteo import EnsembleForecast
 
     forecast = MagicMock(spec=EnsembleForecast)
     forecast.city = "nyc"

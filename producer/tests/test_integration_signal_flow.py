@@ -13,15 +13,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy import create_engine
 
-from signal_producer.clients.gamma import GammaClient
+from signal_producer.clients.polymarket.gamma import GammaClient
 from signal_producer.models.models import Base
-from signal_producer.publishing.websocket import SignalBroadcaster
-from signal_producer.registry.market_registry import MarketRegistry
-from signal_producer.clients.markets import WeatherEvent, WeatherMarket
-from signal_producer.clients.open_meteo import EnsembleForecast, OpenMeteoClient
+from signal_producer.publishing.websocket_signal_broadcaster import SignalBroadcaster
+from signal_producer.data.polymarket_registry import MarketRegistry
+from signal_producer.clients.polymarket.markets import WeatherEvent, WeatherMarket
+from signal_producer.clients.weather.open_meteo import EnsembleForecast, OpenMeteoClient
 from signal_producer.tasks.event_discovery import EventDiscoveryTask
 from signal_producer.tasks.signal_generator import SignalGeneratorTask
-from signal_producer.tracker.price_tracker import PriceTracker
+from signal_producer.data.polymarket_price_tracker import PriceTracker
 
 
 @pytest.fixture

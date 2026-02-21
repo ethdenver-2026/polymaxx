@@ -1538,6 +1538,7 @@ name = "signal-producer"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "eth-account" },
     { name = "fastapi" },
     { name = "httpx", extra = ["http2"] },
     { name = "openai" },
@@ -1572,6 +1573,7 @@ live = [
 [package.metadata]
 requires-dist = [
     { name = "cfgrib", marker = "extra == 'backtest'", specifier = ">=0.9.10" },
+    { name = "eth-account", specifier = ">=0.13.5" },
     { name = "fastapi", specifier = "==0.129.0" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.28.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10.0" },

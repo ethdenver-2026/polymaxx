@@ -17,10 +17,12 @@ class ProducerSignalExchange(BaseModel):
 
     exchange: str
     event_id: str
+    event_title: str
+    resolution_source: str
+    market_question: str
+    market_group_item_title: str
     token_id: str
     side: str
-    market_description: str
-    resolution_source: str
     market_price: float = Field(gt=0, lt=1)
     edge: float
     price_timestamp: datetime
@@ -90,7 +92,9 @@ def parse_producer_signal_record(payload: dict[str, Any]) -> ProducerSignalRecor
             "exchange": exchange.exchange,
             "side": exchange.side,
             "resolution_source": exchange.resolution_source,
-            "market_description": exchange.market_description,
+            "event_title": exchange.event_title,
+            "market_question": exchange.market_question,
+            "market_group_item_title": exchange.market_group_item_title,
             "price_timestamp": exchange.price_timestamp.isoformat(),
         }
     )
