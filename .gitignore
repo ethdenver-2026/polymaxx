@@ -70,8 +70,10 @@ Thumbs.db
 credentials.json
 .worktrees/
 
+# Node
+node_modules/
+
 # Dashboard
-dashboard/node_modules/
 dashboard/dist/
 
 # SQLite databases

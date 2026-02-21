@@ -101,6 +101,7 @@ class ProducerOrchestrator:
             poll_interval=self._poll_interval,
         )
 
+        settings = get_settings()
         self._signal_generator = SignalGeneratorTask(
             registry=self._registry,
             open_meteo_client=self._open_meteo,
@@ -108,6 +109,11 @@ class ProducerOrchestrator:
             engine=self._engine,
             edge_threshold=self._edge_threshold,
             forecast_interval=self._forecast_interval,
+            llm_pricing_mode=settings.llm_pricing_mode,
+            zg_ws_uri=settings.zg_ws_uri,
+            llm_temperature=settings.llm_temperature,
+            signal_preview_ttl_minutes=settings.signal_preview_ttl_minutes,
+            producer_id=settings.polymarket_wallet_address or "anonymous",
         )
 
         logger.info(
