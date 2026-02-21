@@ -44,6 +44,7 @@ _AUCTION_SCHEMA_COLUMNS: dict[str, str] = {
     "event_title": "TEXT",
     "market_group_item_title": "TEXT",
 }
+_TRADES_SCHEMA_COLUMNS: dict[str, str] = {}  # future migrations
 _DB_INITIALIZED = False
 _DB_INIT_LOCK = Lock()
 
@@ -132,6 +133,47 @@ def init_db() -> None:
             negative_delta      INTEGER NOT NULL
         )
         """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS consumer_trades (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_log_id      INTEGER,
+            trade_type         TEXT NOT NULL,
+            token_id           TEXT NOT NULL,
+            side               TEXT NOT NULL DEFAULT 'buy',
+            entry_price        REAL,
+            size_usd           REAL,
+            model_probability  REAL,
+            signal_edge        REAL,
+            live_edge          REAL,
+            order_id           TEXT,
+            status             TEXT NOT NULL DEFAULT 'open',
+            event_id           TEXT,
+            event_title        TEXT,
+            market_description TEXT,
+            city               TEXT,
+            target_date        TEXT,
+            created_at         REAL NOT NULL,
+            closed_at          REAL,
+            exit_price         REAL,
+            pnl_usd            REAL
+        )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_trades_status "
+            "ON consumer_trades (status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_trades_trade_type "
+            "ON consumer_trades (trade_type)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_trades_created_at "
+            "ON consumer_trades (created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_trades_token_id "
+            "ON consumer_trades (token_id)"
+        )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_auction_id "
             "ON consumer_auction_log (auction_id)"
@@ -167,6 +209,16 @@ def init_db() -> None:
             if name not in existing_auction_cols:
                 conn.execute(
                     f"ALTER TABLE consumer_auction_log ADD COLUMN {name} {sql_type}"
+                )
+        # Idempotent migration: add columns that don't exist yet (trades)
+        existing_trade_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(consumer_trades)").fetchall()
+        }
+        for name, sql_type in _TRADES_SCHEMA_COLUMNS.items():
+            if name not in existing_trade_cols:
+                conn.execute(
+                    f"ALTER TABLE consumer_trades ADD COLUMN {name} {sql_type}"
                 )
         conn.commit()
         conn.close()
@@ -506,56 +558,109 @@ def get_signals(limit: int = 100) -> list[dict]:
     return results
 
 
-def get_paper_positions() -> list[dict]:
-    """Return paper (simulated) positions from the signal log."""
+def log_trade(
+    *,
+    trade_type: str,
+    token_id: str,
+    side: str = "buy",
+    entry_price: float | None = None,
+    size_usd: float | None = None,
+    model_probability: float | None = None,
+    signal_edge: float | None = None,
+    live_edge: float | None = None,
+    order_id: str | None = None,
+    status: str = "open",
+    event_id: str | None = None,
+    event_title: str | None = None,
+    market_description: str | None = None,
+    city: str | None = None,
+    target_date: str | None = None,
+    signal_log_id: int | None = None,
+) -> int:
+    """Insert a trade record and notify subscribers. Returns trade_id."""
+    now = time.time()
+    init_db()
+    conn = sqlite3.connect(str(DB_PATH))
+    cur = conn.execute(
+        """
+        INSERT INTO consumer_trades
+            (signal_log_id, trade_type, token_id, side, entry_price, size_usd,
+             model_probability, signal_edge, live_edge, order_id, status,
+             event_id, event_title, market_description, city, target_date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            signal_log_id, trade_type, token_id, side, entry_price, size_usd,
+            model_probability, signal_edge, live_edge, order_id, status,
+            event_id, event_title, market_description, city, target_date, now,
+        ),
+    )
+    conn.commit()
+    trade_id = cur.lastrowid
+    conn.close()
+
+    _notify({
+        "type": "trade",
+        "id": trade_id,
+        "trade_type": trade_type,
+        "token_id": token_id,
+        "status": status,
+        "created_at": now,
+    })
+    return trade_id
+
+
+def get_trades(
+    limit: int = 100,
+    status: str | None = None,
+    trade_type: str | None = None,
+) -> list[dict]:
+    """Return trades with optional filters."""
     init_db()
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
+    clauses: list[str] = []
+    params: list = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if trade_type:
+        clauses.append("trade_type = ?")
+        params.append(trade_type)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
     rows = conn.execute(
-        """
-        SELECT
-            id,
-            received_at,
-            signal_json,
-            signal_price,
-            signal_edge
-        FROM consumer_signal_log
-        WHERE action = 'simulated'
-        ORDER BY received_at DESC
-        """
+        f"SELECT * FROM consumer_trades {where} ORDER BY created_at DESC LIMIT ?",
+        params,
     ).fetchall()
     conn.close()
+    return [dict(row) for row in rows]
 
+
+def get_paper_positions() -> list[dict]:
+    """Return paper positions from the trades table (backward-compatible shape)."""
+    trades = get_trades(status="open", trade_type="paper")
     results = []
-    for row in rows:
-        signal = json.loads(row["signal_json"])
+    for t in trades:
         results.append({
-            "token_id": signal.get("token_id", ""),
-            "description": signal.get("description", ""),
-            "side": signal.get("side", "buy"),
-            "entry_price": row["signal_price"] or signal.get("market_price", 0),
-            "size_usd": signal.get("position_size_usd", 0),
-            "model_probability": signal.get("model_probability", 0),
-            "edge": row["signal_edge"] or signal.get("edge", 0),
-            "received_at": row["received_at"],
+            "token_id": t.get("token_id", ""),
+            "description": t.get("market_description") or t.get("event_title") or "",
+            "side": t.get("side", "buy"),
+            "entry_price": t.get("entry_price", 0),
+            "size_usd": t.get("size_usd", 0),
+            "model_probability": t.get("model_probability", 0),
+            "edge": t.get("signal_edge") or t.get("live_edge") or 0,
+            "received_at": t.get("created_at", 0),
         })
     return results
 
 
 def get_executed_notional_usd() -> float:
-    """Return cumulative notional for executed trades in consumer log."""
+    """Return cumulative notional for open trades."""
     init_db()
     conn = sqlite3.connect(str(DB_PATH))
     row = conn.execute(
-        """
-        SELECT COALESCE(SUM(signal_json_extract.position_size_usd), 0.0)
-        FROM (
-            SELECT
-                json_extract(signal_json, '$.position_size_usd') AS position_size_usd
-            FROM consumer_signal_log
-            WHERE action IN ('executed', 'simulated')
-        ) AS signal_json_extract
-        """
+        "SELECT COALESCE(SUM(size_usd), 0.0) FROM consumer_trades WHERE status = 'open'"
     ).fetchone()
     conn.close()
     return float(row[0] or 0.0)

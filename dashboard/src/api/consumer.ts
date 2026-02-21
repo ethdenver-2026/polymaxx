@@ -1,4 +1,4 @@
-import type { AuctionEvent, Balances, ConsumerSignal, ConsumerConfig, GenerateSignalResponse, PaperPosition } from "./types";
+import type { AuctionEvent, Balances, ConsumerSignal, ConsumerConfig, GenerateSignalResponse, PaperPosition, Trade } from "./types";
 
 export async function getBalances(): Promise<Balances> {
   const res = await fetch("/api/balances");
@@ -46,5 +46,15 @@ export async function getAuctions(): Promise<AuctionEvent[]> {
 
 export async function getPaperPositions(): Promise<PaperPosition[]> {
   const res = await fetch("/api/paper-positions");
+  return res.json();
+}
+
+export async function getTrades(params?: { limit?: number; status?: string; trade_type?: string }): Promise<Trade[]> {
+  const q = new URLSearchParams();
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.status) q.set("status", params.status);
+  if (params?.trade_type) q.set("trade_type", params.trade_type);
+  const qs = q.toString();
+  const res = await fetch(`/api/trades${qs ? `?${qs}` : ""}`);
   return res.json();
 }

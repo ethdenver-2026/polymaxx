@@ -116,6 +116,28 @@ export interface PaperPosition {
   received_at: number;
 }
 
+export interface Trade {
+  id: number;
+  trade_type: "paper" | "live";
+  token_id: string;
+  side: string;
+  entry_price: number | null;
+  size_usd: number | null;
+  model_probability: number | null;
+  signal_edge: number | null;
+  live_edge: number | null;
+  order_id: string | null;
+  status: "open" | "closed" | "error";
+  event_title: string | null;
+  market_description: string | null;
+  city: string | null;
+  target_date: string | null;
+  created_at: number;
+  closed_at: number | null;
+  exit_price: number | null;
+  pnl_usd: number | null;
+}
+
 export interface GenerateSignalResponse {
   ok: boolean;
   signals_found: number;

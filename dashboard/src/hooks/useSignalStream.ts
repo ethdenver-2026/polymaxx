@@ -19,6 +19,7 @@ export function useSignalStream() {
       queryClient.invalidateQueries({ queryKey: ["balances"] });
       queryClient.invalidateQueries({ queryKey: ["positions"] });
       queryClient.invalidateQueries({ queryKey: ["portfolioValue"] });
+      queryClient.invalidateQueries({ queryKey: ["trades"] });
     };
 
     es.onerror = () => {

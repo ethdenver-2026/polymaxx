@@ -6,7 +6,7 @@ import structlog
 
 from .balances import get_balances
 from .config import Settings
-from .db import get_auction_spend_usd, get_executed_notional_usd
+from .db import get_auction_spend_usd, get_executed_notional_usd, log_trade
 from .execute_order import ExecutionResult, execute_order
 from .polymarket import init_client, get_live_price as _get_live_price
 from .signal_pipeline import evaluate_strategy, parse_producer_signal_record
@@ -85,6 +85,27 @@ def process_signal_payload(payload: dict, settings: Settings) -> dict:
     if settings.trading_mode != "live":
         response["action"] = "simulated"
         response["status"] = "paper"
+        # Record paper trade
+        exchange = payload.get("exchanges", [{}])[0] if payload.get("exchanges") else {}
+        metadata = payload.get("metadata", {})
+        try:
+            log_trade(
+                trade_type="paper",
+                token_id=record.token_id,
+                side="buy",
+                entry_price=live_price,
+                size_usd=decision.position_size_usd,
+                model_probability=record.model_probability,
+                signal_edge=record.edge,
+                live_edge=decision.live_edge,
+                event_id=exchange.get("event_id"),
+                event_title=exchange.get("event_title"),
+                market_description=exchange.get("market_question") or exchange.get("market_description"),
+                city=metadata.get("city"),
+                target_date=metadata.get("target_date"),
+            )
+        except Exception:
+            logger.exception("Failed to log paper trade")
         return response
 
     execution_payload = {
@@ -111,6 +132,29 @@ def process_signal_payload(payload: dict, settings: Settings) -> dict:
             "live_edge": result.live_edge,
         }
     )
+    # Record live trade
+    exchange = payload.get("exchanges", [{}])[0] if payload.get("exchanges") else {}
+    metadata = payload.get("metadata", {})
+    try:
+        log_trade(
+            trade_type="live",
+            token_id=record.token_id,
+            side="buy",
+            entry_price=live_price,
+            size_usd=decision.position_size_usd,
+            model_probability=record.model_probability,
+            signal_edge=record.edge,
+            live_edge=decision.live_edge,
+            order_id=result.order_id,
+            status="open" if result.success else "error",
+            event_id=exchange.get("event_id"),
+            event_title=exchange.get("event_title"),
+            market_description=exchange.get("market_question") or exchange.get("market_description"),
+            city=metadata.get("city"),
+            target_date=metadata.get("target_date"),
+        )
+    except Exception:
+        logger.exception("Failed to log live trade")
     logger.info(
         "Signal processed",
         action=response["action"],

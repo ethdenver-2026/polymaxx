@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from py_clob_client.client import ClobClient
 
 from .config import get_settings
-from .db import log_signal
+from .db import log_signal, log_trade
 from .execute_order import execute_order, MIN_ORDER_USD
 from .polymarket import init_client, get_live_price, get_clob_balance
 
@@ -264,6 +264,24 @@ class Strategy(ABC):
             log_signal(signal, response)
         except Exception:
             logger.exception("Failed to log signal to database")
+
+        # Record trade for live executions
+        if result.should_trade and result.order_id:
+            try:
+                log_trade(
+                    trade_type="live",
+                    token_id=signal.get("token_id", ""),
+                    side=signal.get("side", "buy"),
+                    entry_price=result.adjusted_price,
+                    size_usd=result.adjusted_position_usd,
+                    model_probability=signal.get("model_probability"),
+                    signal_edge=result.signal_edge,
+                    live_edge=result.live_edge,
+                    order_id=result.order_id,
+                    status="open" if result.order_id else "error",
+                )
+            except Exception:
+                logger.exception("Failed to log trade from strategy pipeline")
 
 
 class WeatherStrategy(Strategy):
