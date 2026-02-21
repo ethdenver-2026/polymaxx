@@ -17,11 +17,13 @@ from starlette.responses import StreamingResponse
 
 from pydantic import BaseModel
 
+import httpx
 import structlog
 
 from .balances import get_balances
 from .config import get_settings, get_trading_mode, set_trading_mode
 from .db import get_auction_events, get_trades, log_auction_event, log_trade, get_paper_positions, get_signals, log_signal, subscribe, unsubscribe
+from .polymarket import init_client, get_live_price as _get_live_price
 from .signal_generator import generate_signal
 
 logger = structlog.get_logger()
@@ -134,9 +136,57 @@ def paper_positions():
     return get_paper_positions()
 
 
+def _enrich_trades_with_prices(trades: list[dict]) -> list[dict]:
+    """Attach current_price and unrealized_pnl to open trades using CLOB orderbook."""
+    open_trades = [t for t in trades if t.get("status") == "open" and t.get("token_id")]
+    if not open_trades:
+        for t in trades:
+            t["current_price"] = None
+            t["unrealized_pnl"] = None
+        return trades
+
+    try:
+        client = init_client()
+    except Exception:
+        logger.warning("Failed to init CLOB client for price enrichment")
+        for t in trades:
+            t["current_price"] = None
+            t["unrealized_pnl"] = None
+        return trades
+
+    # Dedupe by (token_id, side) since get_live_price needs side
+    price_cache: dict[tuple[str, str], float | None] = {}
+    for t in open_trades:
+        key = (t["token_id"], t.get("side", "buy"))
+        if key not in price_cache:
+            try:
+                price_cache[key] = _get_live_price(client, t["token_id"], t.get("side", "buy"))
+            except Exception:
+                price_cache[key] = None
+
+    for t in trades:
+        if t.get("status") != "open":
+            t["current_price"] = None
+            t["unrealized_pnl"] = None
+            continue
+        key = (t.get("token_id", ""), t.get("side", "buy"))
+        cur = price_cache.get(key)
+        t["current_price"] = cur
+        entry = t.get("entry_price")
+        size = t.get("size_usd")
+        if cur is not None and entry and entry > 0 and size:
+            shares = size / entry
+            t["unrealized_pnl"] = round(shares * cur - size, 4)
+        else:
+            t["unrealized_pnl"] = None
+
+    return trades
+
+
 @app.get("/api/trades")
 def trades(limit: int = 100, status: str | None = None, trade_type: str | None = None):
-    return get_trades(limit=limit, status=status, trade_type=trade_type)
+    raw = get_trades(limit=limit, status=status, trade_type=trade_type)
+    return _enrich_trades_with_prices(raw)
 
 
 class GenerateSignalRequest(BaseModel):

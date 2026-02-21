@@ -136,6 +136,8 @@ export interface Trade {
   closed_at: number | null;
   exit_price: number | null;
   pnl_usd: number | null;
+  current_price: number | null;
+  unrealized_pnl: number | null;
 }
 
 export interface GenerateSignalResponse {
