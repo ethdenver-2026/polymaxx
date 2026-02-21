@@ -6,6 +6,7 @@ import hashlib
 import os
 import secrets
 import time
+import asyncio
 from datetime import UTC, datetime
 
 import httpx
@@ -14,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconne
 from pydantic import BaseModel, Field
 from eth_account import Account
 from eth_account.messages import encode_defunct
+from signal_schema.addressing import normalize_evm_address
 
 from .main import run_once
 from .publishing.websocket_signal_broadcaster import broadcaster
@@ -25,8 +27,16 @@ app = FastAPI(title="Signal Producer WebSocket Server", version="0.1.0")
 
 _SIWX_CHALLENGES: dict[str, dict[str, str | float]] = {}
 _SIWX_TOKENS: dict[str, dict[str, str | float]] = {}
+_CONSUMED_TX_HASHES: dict[str, float] = {}
+_PAYMENT_REPLAY_LOCK = asyncio.Lock()
 _SIWX_CHALLENGE_TTL_SECONDS = float(os.getenv("PRODUCER_SIWX_CHALLENGE_TTL_SECONDS", "120"))
 _SIWX_TOKEN_TTL_SECONDS = float(os.getenv("PRODUCER_SIWX_TOKEN_TTL_SECONDS", "600"))
+_DEBUG_ENDPOINTS_ENABLED = os.getenv("DEBUG_ENDPOINTS_ENABLED", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 class SiwxChallengeRequest(BaseModel):
@@ -65,10 +75,10 @@ class X402PaymentRequest(BaseModel):
 
 
 def _normalize_address(value: str) -> str:
-    addr = value.strip().lower()
-    if not addr.startswith("0x") or len(addr) != 42:
+    try:
+        return normalize_evm_address(value)
+    except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid wallet address: {value}")
-    return addr
 
 
 def _purge_expired_state() -> None:
@@ -93,6 +103,13 @@ def _extract_bearer_token(header_value: str | None) -> str:
     if not token:
         raise HTTPException(status_code=401, detail="Bearer token is empty")
     return token
+
+
+def _normalize_tx_hash(tx_hash: str) -> str:
+    tx = tx_hash.strip().lower()
+    if not tx.startswith("0x") or len(tx) != 66:
+        raise HTTPException(status_code=400, detail=f"Invalid tx_hash format: {tx_hash}")
+    return tx
 
 
 def _rpc_call(*, rpc_url: str, method: str, params: list) -> object:
@@ -239,20 +256,26 @@ async def process_x402_v2_payment(
     )
     if _normalize_address(payload.token_address) != _normalize_address(expected_token_address):
         raise HTTPException(status_code=400, detail="Token contract does not match producer configuration")
-    _verify_onchain_payment(
-        tx_hash=payload.tx_hash,
-        from_address=payload.from_wallet_address or token_wallet,
-        to_address=producer_wallet,
-        token_address=payload.token_address,
-        min_token_amount_units=payload.token_amount_units,
-    )
-    accepted = broadcaster.notify_payment_result(
-        auction_id=payload.auction_id,
-        consumer_did=payload.consumer_did,
-        success=True,
-    )
-    if not accepted:
-        raise HTTPException(status_code=409, detail="No pending payment waiter for consumer/auction")
+    normalized_tx_hash = _normalize_tx_hash(payload.tx_hash)
+    async with _PAYMENT_REPLAY_LOCK:
+        if normalized_tx_hash in _CONSUMED_TX_HASHES:
+            raise HTTPException(status_code=409, detail=f"Replay detected: tx_hash already consumed {normalized_tx_hash}")
+        _verify_onchain_payment(
+            tx_hash=normalized_tx_hash,
+            from_address=payload.from_wallet_address or token_wallet,
+            to_address=producer_wallet,
+            token_address=payload.token_address,
+            min_token_amount_units=payload.token_amount_units,
+        )
+        accepted = broadcaster.notify_payment_result(
+            auction_id=payload.auction_id,
+            consumer_did=payload.consumer_did,
+            success=True,
+        )
+        if not accepted:
+            raise HTTPException(status_code=409, detail="No pending payment waiter for consumer/auction")
+        _CONSUMED_TX_HASHES[normalized_tx_hash] = time.time()
+        _SIWX_TOKENS.pop(token, None)
     logger.info(
         "Producer x402_v2 payment accepted",
         auction_id=payload.auction_id,
@@ -260,9 +283,9 @@ async def process_x402_v2_payment(
         amount_usdc=payload.amount_usdc,
         network=payload.network,
         asset=payload.asset,
-        tx_hash=payload.tx_hash,
+        tx_hash=normalized_tx_hash,
     )
-    return {"accepted": True, "tx_hash": payload.tx_hash}
+    return {"accepted": True, "tx_hash": normalized_tx_hash}
 
 
 @app.get("/health")
@@ -284,6 +307,8 @@ async def run_cycle(cities: str | None = None) -> dict:
 @app.post("/debug/broadcast-test-signal")
 async def broadcast_test_signal() -> dict[str, str]:
     """Broadcast a deterministic signal to exercise auction/payment E2E locally."""
+    if not _DEBUG_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
     now = datetime.now(UTC)
     signal = ProducerSignal(
         signal_type="weather",

@@ -6,6 +6,7 @@ import functools
 from typing import Literal
 
 from pydantic import Field
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -72,6 +73,27 @@ class Settings(BaseSettings):
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }
+
+    @model_validator(mode="after")
+    def _validate_live_networks(self) -> "Settings":
+        if self.trading_mode != "live":
+            return self
+        if self.chain_id != 137:
+            raise ValueError(
+                f"TRADING_MODE=live requires CHAIN_ID=137 for Polymarket trading, got {self.chain_id}"
+            )
+        if self.x402_mode == "x402_v2":
+            if self.x402_v2_chain_id != 8453:
+                raise ValueError(
+                    "TRADING_MODE=live with X402_MODE=x402_v2 requires "
+                    f"X402_V2_CHAIN_ID=8453 (Base mainnet), got {self.x402_v2_chain_id}"
+                )
+            if self.x402_v2_asset.strip().lower() != "usdc":
+                raise ValueError(
+                    "TRADING_MODE=live with X402_MODE=x402_v2 requires "
+                    f"X402_V2_ASSET=usdc, got {self.x402_v2_asset!r}"
+                )
+        return self
 
 
 @functools.lru_cache(maxsize=1)

@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 import structlog
 import websockets
 
-from .balances import get_balances
+from .balances import get_balances, get_payment_usdc_balance
 from .bid_pricing import BidDecision, build_bid_pricing_input, normalize_bid_decision
 from .config import Settings
 from .consumer_engine import process_signal_payload
@@ -21,7 +21,7 @@ from .db import (
     record_consumer_payment_failure,
     validate_consumer_did_wallet_binding,
 )
-from .payment import process_auction_payment
+from .payment import AuctionPaymentRequest, KiteConfig, X402V2Config, process_auction_payment
 from .llm_clients import BidLlmRouter
 
 logger = structlog.get_logger()
@@ -214,7 +214,13 @@ async def determine_bid_for_preview(payload: dict, settings: Settings) -> BidDec
         private_key=settings.polymarket_private_key,
         wallet_address=settings.consumer_wallet_address,
     )
-    balance_usdc = balances.polymarket_usdc + balances.onchain_usdc
+    payment_usdc = get_payment_usdc_balance(
+        wallet_address=settings.consumer_wallet_address,
+        rpc_url=settings.x402_v2_rpc_url,
+        token_address=settings.x402_v2_token_address,
+        token_decimals=settings.x402_v2_token_decimals,
+    )
+    balance_usdc = payment_usdc
     context = build_bid_pricing_input(
         preview_payload=payload,
         balance_usdc=balance_usdc,
@@ -240,6 +246,9 @@ async def determine_bid_for_preview(payload: dict, settings: Settings) -> BidDec
         "Bid decision generated",
         auction_id=context.auction_id,
         provider=settings.bid_llm_provider,
+        polymarket_usdc=balances.polymarket_usdc,
+        polygon_onchain_usdc_e=balances.onchain_usdc,
+        payment_usdc=payment_usdc,
         context=asdict(context),
         decision=asdict(normalized),
     )
@@ -260,7 +269,7 @@ def _execute_payment_for_win_notice(
         or settings.x402_mode
     )
     try:
-        success = process_auction_payment(
+        payment_request = AuctionPaymentRequest(
             auction_id=auction_id,
             consumer_did=consumer_did,
             wallet_address=settings.consumer_wallet_address,
@@ -268,18 +277,27 @@ def _execute_payment_for_win_notice(
             x402_payment_url=payment_url,
             bid_amount=bid_amount,
             x402_mode=selected_mode,
-            kite_session_url=settings.kite_session_url,
-            kite_api_key=settings.kite_api_key,
-            x402_v2_network=settings.x402_v2_network,
-            x402_v2_asset=settings.x402_v2_asset,
-            x402_v2_chain_id=settings.x402_v2_chain_id,
-            x402_v2_rpc_url=settings.x402_v2_rpc_url,
-            x402_v2_token_address=settings.x402_v2_token_address,
-            x402_v2_token_decimals=settings.x402_v2_token_decimals,
+        )
+        kite_config = KiteConfig(
+            session_url=settings.kite_session_url,
+            api_key=settings.kite_api_key,
+        )
+        x402_v2_config = X402V2Config(
+            network=settings.x402_v2_network,
+            asset=settings.x402_v2_asset,
+            chain_id=settings.x402_v2_chain_id,
+            rpc_url=settings.x402_v2_rpc_url,
+            token_address=settings.x402_v2_token_address,
+            token_decimals=settings.x402_v2_token_decimals,
             siwx_challenge_url=settings.siwx_challenge_url,
             siwx_auth_url=settings.siwx_auth_url,
             siwx_app_id=settings.siwx_app_id,
             siwx_wallet_private_key=settings.siwx_wallet_private_key,
+        )
+        success = process_auction_payment(
+            request=payment_request,
+            kite_config=kite_config,
+            x402_v2_config=x402_v2_config,
             timeout_seconds=(
                 settings.x402_v2_timeout_seconds
                 if selected_mode == "x402_v2"

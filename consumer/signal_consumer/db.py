@@ -8,6 +8,9 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from threading import Lock
+
+from signal_schema.addressing import normalize_evm_address
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "consumer_signals.db"
 
@@ -26,6 +29,8 @@ _SCHEMA_COLUMNS: dict[str, str] = {
     "metadata_json": "TEXT",
     "strategy_checks": "TEXT",
 }
+_DB_INITIALIZED = False
+_DB_INIT_LOCK = Lock()
 
 
 def subscribe() -> queue.Queue[dict]:
@@ -57,9 +62,15 @@ def _notify(signal_row: dict) -> None:
 
 def init_db() -> None:
     """Create consumer tables if they don't exist."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("""
+    global _DB_INITIALIZED
+    if _DB_INITIALIZED:
+        return
+    with _DB_INIT_LOCK:
+        if _DB_INITIALIZED:
+            return
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS consumer_signal_log (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             received_at REAL    NOT NULL,
@@ -72,8 +83,8 @@ def init_db() -> None:
             order_id    TEXT,
             errors      TEXT
         )
-    """)
-    conn.execute("""
+        """)
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS consumer_auction_log (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             received_at         REAL    NOT NULL,
@@ -93,8 +104,8 @@ def init_db() -> None:
             metadata_json       TEXT,
             raw_message_json    TEXT    NOT NULL
         )
-    """)
-    conn.execute("""
+        """)
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS consumer_reputation_events (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             received_at         REAL    NOT NULL,
@@ -103,42 +114,43 @@ def init_db() -> None:
             reason              TEXT    NOT NULL,
             negative_delta      INTEGER NOT NULL
         )
-    """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_auction_id "
-        "ON consumer_auction_log (auction_id)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_received_at "
-        "ON consumer_auction_log (received_at)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_outcome "
-        "ON consumer_auction_log (outcome)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_consumer_rep_events_consumer_did "
-        "ON consumer_reputation_events (consumer_did)"
-    )
-    # Idempotent migration: add columns that don't exist yet
-    existing_cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(consumer_signal_log)").fetchall()
-    }
-    for name, sql_type in _SCHEMA_COLUMNS.items():
-        if name not in existing_cols:
-            conn.execute(
-                f"ALTER TABLE consumer_signal_log ADD COLUMN {name} {sql_type}"
-            )
-    conn.commit()
-    conn.close()
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_auction_id "
+            "ON consumer_auction_log (auction_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_received_at "
+            "ON consumer_auction_log (received_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_auction_log_outcome "
+            "ON consumer_auction_log (outcome)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consumer_rep_events_consumer_did "
+            "ON consumer_reputation_events (consumer_did)"
+        )
+        # Idempotent migration: add columns that don't exist yet
+        existing_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(consumer_signal_log)").fetchall()
+        }
+        for name, sql_type in _SCHEMA_COLUMNS.items():
+            if name not in existing_cols:
+                conn.execute(
+                    f"ALTER TABLE consumer_signal_log ADD COLUMN {name} {sql_type}"
+                )
+        conn.commit()
+        conn.close()
+        _DB_INITIALIZED = True
 
 
 def _normalize_wallet_address(wallet_address: str) -> str:
-    normalized = wallet_address.strip().lower()
-    if not normalized.startswith("0x") or len(normalized) != 42:
-        raise RuntimeError(f"Invalid wallet address format: {wallet_address}")
-    return normalized
+    try:
+        return normalize_evm_address(wallet_address)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def derive_consumer_did_pkh(*, chain_id: int, wallet_address: str) -> str:

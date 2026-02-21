@@ -3,69 +3,74 @@
 from __future__ import annotations
 
 import httpx
+import time
+from dataclasses import dataclass
 import structlog
 from eth_account import Account
 from eth_utils import to_checksum_address
+
+from signal_schema.addressing import normalize_evm_address
 
 from .siwx_auth import fetch_siwx_access_token
 
 logger = structlog.get_logger()
 
 
+@dataclass(frozen=True)
+class AuctionPaymentRequest:
+    auction_id: str
+    consumer_did: str
+    wallet_address: str
+    producer_wallet_address: str
+    x402_payment_url: str
+    bid_amount: float
+    x402_mode: str
+
+
+@dataclass(frozen=True)
+class KiteConfig:
+    session_url: str
+    api_key: str
+
+
+@dataclass(frozen=True)
+class X402V2Config:
+    network: str
+    asset: str
+    chain_id: int
+    rpc_url: str
+    token_address: str
+    token_decimals: int
+    siwx_challenge_url: str = ""
+    siwx_auth_url: str = ""
+    siwx_app_id: str = ""
+    siwx_wallet_private_key: str = ""
+
+
 def process_auction_payment(
     *,
-    auction_id: str,
-    consumer_did: str,
-    wallet_address: str,
-    producer_wallet_address: str,
-    x402_payment_url: str,
-    bid_amount: float,
-    x402_mode: str,
-    kite_session_url: str,
-    kite_api_key: str,
-    x402_v2_network: str,
-    x402_v2_asset: str,
-    x402_v2_chain_id: int,
-    x402_v2_rpc_url: str,
-    x402_v2_token_address: str,
-    x402_v2_token_decimals: int,
-    siwx_challenge_url: str = "",
-    siwx_auth_url: str = "",
-    siwx_app_id: str = "",
-    siwx_wallet_private_key: str = "",
+    request: AuctionPaymentRequest,
+    kite_config: KiteConfig,
+    x402_v2_config: X402V2Config,
     timeout_seconds: float,
 ) -> bool:
-    if x402_mode == "kite":
+    if request.x402_mode == "kite":
         return _process_kite_payment(
-            auction_id=auction_id,
-            consumer_did=consumer_did,
-            x402_payment_url=x402_payment_url,
-            bid_amount=bid_amount,
-            kite_session_url=kite_session_url,
-            kite_api_key=kite_api_key,
+            auction_id=request.auction_id,
+            consumer_did=request.consumer_did,
+            x402_payment_url=request.x402_payment_url,
+            bid_amount=request.bid_amount,
+            kite_session_url=kite_config.session_url,
+            kite_api_key=kite_config.api_key,
             timeout_seconds=timeout_seconds,
         )
-    if x402_mode == "x402_v2":
+    if request.x402_mode == "x402_v2":
         return _process_x402_v2_payment(
-            auction_id=auction_id,
-            consumer_did=consumer_did,
-            wallet_address=wallet_address,
-            x402_payment_url=x402_payment_url,
-            bid_amount=bid_amount,
-            x402_v2_network=x402_v2_network,
-            x402_v2_asset=x402_v2_asset,
-            x402_v2_chain_id=x402_v2_chain_id,
-            x402_v2_rpc_url=x402_v2_rpc_url,
-            x402_v2_token_address=x402_v2_token_address,
-            x402_v2_token_decimals=x402_v2_token_decimals,
-            siwx_challenge_url=siwx_challenge_url,
-            siwx_auth_url=siwx_auth_url,
-            siwx_app_id=siwx_app_id,
-            siwx_wallet_private_key=siwx_wallet_private_key,
-            producer_wallet_address=producer_wallet_address,
+            request=request,
+            x402_v2_config=x402_v2_config,
             timeout_seconds=timeout_seconds,
         )
-    raise RuntimeError(f"Unsupported x402 mode: {x402_mode}")
+    raise RuntimeError(f"Unsupported x402 mode: {request.x402_mode}")
 
 
 def _process_kite_payment(
@@ -146,73 +151,69 @@ def _process_kite_payment(
 
 def _process_x402_v2_payment(
     *,
-    auction_id: str,
-    consumer_did: str,
-    wallet_address: str,
-    x402_payment_url: str,
-    bid_amount: float,
-    x402_v2_network: str,
-    x402_v2_asset: str,
-    x402_v2_chain_id: int,
-    x402_v2_rpc_url: str,
-    x402_v2_token_address: str,
-    x402_v2_token_decimals: int,
-    siwx_challenge_url: str,
-    siwx_auth_url: str,
-    siwx_app_id: str,
-    siwx_wallet_private_key: str,
-    producer_wallet_address: str,
+    request: AuctionPaymentRequest,
+    x402_v2_config: X402V2Config,
     timeout_seconds: float,
 ) -> bool:
-    if not x402_payment_url:
+    if not request.x402_payment_url:
         raise RuntimeError("AuctionWinNotice missing x402_payment_url")
-    if bid_amount <= 0:
-        raise RuntimeError(f"Invalid bid amount for payment execution: {bid_amount}")
-    if not producer_wallet_address:
+    if request.bid_amount <= 0:
+        raise RuntimeError(f"Invalid bid amount for payment execution: {request.bid_amount}")
+    if not request.producer_wallet_address:
         raise RuntimeError("AuctionWinNotice missing producer_wallet_address")
     token = fetch_siwx_access_token(
-        consumer_did=consumer_did,
-        wallet_address=wallet_address,
-        siwx_challenge_url=siwx_challenge_url,
-        siwx_auth_url=siwx_auth_url,
-        siwx_app_id=siwx_app_id,
-        siwx_wallet_private_key=siwx_wallet_private_key,
-        timeout_seconds=timeout_seconds,
-    )
-    tx_hash, token_amount_units = _send_erc20_payment_transaction(
-        chain_id=x402_v2_chain_id,
-        rpc_url=x402_v2_rpc_url,
-        private_key=siwx_wallet_private_key,
-        from_address=wallet_address,
-        to_address=producer_wallet_address,
-        bid_amount_usdc=bid_amount,
-        token_address=x402_v2_token_address,
-        token_decimals=x402_v2_token_decimals,
+        consumer_did=request.consumer_did,
+        wallet_address=request.wallet_address,
+        siwx_challenge_url=x402_v2_config.siwx_challenge_url,
+        siwx_auth_url=x402_v2_config.siwx_auth_url,
+        siwx_app_id=x402_v2_config.siwx_app_id,
+        siwx_wallet_private_key=x402_v2_config.siwx_wallet_private_key,
         timeout_seconds=timeout_seconds,
     )
     logger.info(
         "Starting x402 v2 payment flow",
-        auction_id=auction_id,
-        consumer_did=consumer_did,
-        payment_url=x402_payment_url,
-        bid_amount=bid_amount,
-        network=x402_v2_network,
-        asset=x402_v2_asset,
+        auction_id=request.auction_id,
+        consumer_did=request.consumer_did,
+        payment_url=request.x402_payment_url,
+        bid_amount=request.bid_amount,
+        network=x402_v2_config.network,
+        asset=x402_v2_config.asset,
+    )
+    tx_hash, token_amount_units = _send_erc20_payment_transaction(
+        chain_id=x402_v2_config.chain_id,
+        rpc_url=x402_v2_config.rpc_url,
+        private_key=x402_v2_config.siwx_wallet_private_key,
+        from_address=request.wallet_address,
+        to_address=request.producer_wallet_address,
+        bid_amount_usdc=request.bid_amount,
+        token_address=x402_v2_config.token_address,
+        token_decimals=x402_v2_config.token_decimals,
+        timeout_seconds=timeout_seconds,
+    )
+    _wait_for_transaction_receipt(
+        tx_hash=tx_hash,
+        rpc_url=x402_v2_config.rpc_url,
+        timeout_seconds=timeout_seconds,
+    )
+    logger.info(
+        "x402 v2 transaction confirmed",
+        auction_id=request.auction_id,
+        consumer_did=request.consumer_did,
         tx_hash=tx_hash,
         token_amount_units=token_amount_units,
     )
     with httpx.Client(timeout=timeout_seconds) as client:
         payment_resp = client.post(
-            x402_payment_url,
+            request.x402_payment_url,
             json={
-                "auction_id": auction_id,
-                "consumer_did": consumer_did,
-                "amount_usdc": bid_amount,
-                "network": x402_v2_network,
-                "asset": x402_v2_asset,
+                "auction_id": request.auction_id,
+                "consumer_did": request.consumer_did,
+                "amount_usdc": request.bid_amount,
+                "network": x402_v2_config.network,
+                "asset": x402_v2_config.asset,
                 "tx_hash": tx_hash,
-                "from_wallet_address": wallet_address,
-                "token_address": x402_v2_token_address,
+                "from_wallet_address": request.wallet_address,
+                "token_address": x402_v2_config.token_address,
                 "token_amount_units": token_amount_units,
             },
             headers={"Authorization": f"Bearer {token}"},
@@ -220,16 +221,16 @@ def _process_x402_v2_payment(
         if payment_resp.status_code >= 400:
             logger.error(
                 "x402 v2 payment request failed",
-                auction_id=auction_id,
-                consumer_did=consumer_did,
+                auction_id=request.auction_id,
+                consumer_did=request.consumer_did,
                 status_code=payment_resp.status_code,
                 body=payment_resp.text,
             )
             return False
         logger.info(
             "x402 v2 payment completed",
-            auction_id=auction_id,
-            consumer_did=consumer_did,
+            auction_id=request.auction_id,
+            consumer_did=request.consumer_did,
             status_code=payment_resp.status_code,
             tx_hash=tx_hash,
         )
@@ -237,10 +238,10 @@ def _process_x402_v2_payment(
 
 
 def _normalize_address(address: str) -> str:
-    normalized = address.strip().lower()
-    if not normalized.startswith("0x") or len(normalized) != 42:
-        raise RuntimeError(f"Invalid address: {address}")
-    return normalized
+    try:
+        return normalize_evm_address(address)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid address: {address}") from exc
 
 
 def _rpc_call(*, rpc_url: str, method: str, params: list, timeout_seconds: float) -> object:
@@ -325,3 +326,35 @@ def _send_erc20_payment_transaction(
         tx_hash=tx_hash_str,
     )
     return tx_hash_str, token_amount_units
+
+
+def _wait_for_transaction_receipt(
+    *,
+    tx_hash: str,
+    rpc_url: str,
+    timeout_seconds: float,
+) -> None:
+    if timeout_seconds <= 0:
+        raise RuntimeError(f"Invalid timeout_seconds for receipt wait: {timeout_seconds}")
+    deadline = timeout_seconds
+    elapsed = 0.0
+    poll_seconds = min(1.0, max(0.2, timeout_seconds / 10))
+    while elapsed < deadline:
+        receipt = _rpc_call(
+            rpc_url=rpc_url,
+            method="eth_getTransactionReceipt",
+            params=[tx_hash],
+            timeout_seconds=timeout_seconds,
+        )
+        if receipt:
+            status = int(str(receipt.get("status", "0x0")), 16)
+            if status != 1:
+                raise RuntimeError(
+                    f"On-chain transaction failed while waiting for receipt: tx_hash={tx_hash} status={status}"
+                )
+            return
+        time.sleep(poll_seconds)
+        elapsed += poll_seconds
+    raise RuntimeError(
+        f"Timed out waiting for transaction receipt: tx_hash={tx_hash} timeout_seconds={timeout_seconds}"
+    )

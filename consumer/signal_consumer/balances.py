@@ -1,5 +1,5 @@
 """
-Check wallet balances on Polymarket (CLOB) and on-chain (Polygon).
+Check wallet balances on Polymarket (CLOB) and on-chain trading/payment rails.
 
 Usage as CLI:
     python -m signal_consumer.balances
@@ -23,14 +23,14 @@ from dotenv import load_dotenv
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
 
-# USDC.e on Polygon: https://polygonscan.com/token/0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
-USDC_E_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-USDC_E_DECIMALS = 6
+# Default token settings (Polygon USDC.e).
+DEFAULT_USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+DEFAULT_USDC_DECIMALS = 6
 
 # POL (native gas token) decimals
 POL_DECIMALS = 18
 
-# Public Polygon RPC
+# Public Polygon RPC (trading default).
 POLYGON_RPC = "https://polygon-bor-rpc.publicnode.com"
 
 
@@ -104,11 +104,11 @@ def _get_polymarket_balance(
         BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=sig_type)
     )
 
-    balance = int(result.get("balance", "0")) / 10**USDC_E_DECIMALS
+    balance = int(result.get("balance", "0")) / 10**DEFAULT_USDC_DECIMALS
     allowances = result.get("allowances", {})
 
     # The allowances dict maps contract addresses to allowance amounts
-    allowance_values = [int(v) / 10**USDC_E_DECIMALS for v in allowances.values()]
+    allowance_values = [int(v) / 10**DEFAULT_USDC_DECIMALS for v in allowances.values()]
 
     exchange_allowance = allowance_values[0] if len(allowance_values) > 0 else 0.0
     neg_risk_allowance = allowance_values[1] if len(allowance_values) > 1 else 0.0
@@ -148,7 +148,9 @@ def _get_eth_balance(rpc_url: str, address: str) -> str:
 
 def _get_onchain_balances(
     wallet_address: str,
-    rpc_url: str = POLYGON_RPC,
+    rpc_url: str,
+    usdc_address: str,
+    usdc_decimals: int,
 ) -> tuple[float, float]:
     """
     Get on-chain USDC.e and POL balances on Polygon.
@@ -160,13 +162,30 @@ def _get_onchain_balances(
     addr_padded = wallet_address.lower().replace("0x", "").zfill(64)
     calldata = "0x70a08231" + addr_padded
 
-    usdc_hex = _eth_call(rpc_url, USDC_E_ADDRESS, calldata)
-    usdc_balance = int(usdc_hex, 16) / 10**USDC_E_DECIMALS
+    usdc_hex = _eth_call(rpc_url, usdc_address, calldata)
+    usdc_balance = int(usdc_hex, 16) / 10**usdc_decimals
 
     pol_hex = _get_eth_balance(rpc_url, wallet_address)
     pol_balance = int(pol_hex, 16) / 10**POL_DECIMALS
 
     return usdc_balance, pol_balance
+
+
+def get_payment_usdc_balance(
+    *,
+    wallet_address: str,
+    rpc_url: str,
+    token_address: str,
+    token_decimals: int,
+) -> float:
+    """Get x402 payment-token balance (e.g., Base mainnet USDC)."""
+    usdc_balance, _ = _get_onchain_balances(
+        wallet_address=wallet_address,
+        rpc_url=rpc_url,
+        usdc_address=token_address,
+        usdc_decimals=token_decimals,
+    )
+    return usdc_balance
 
 
 def get_balances(
@@ -200,7 +219,23 @@ def get_balances(
         private_key, wallet_address, host, chain_id
     )
 
-    onchain_usdc, onchain_pol = _get_onchain_balances(wallet_address)
+    onchain_rpc_url = os.environ.get("ONCHAIN_TRADING_RPC_URL") or os.environ.get("ONCHAIN_RPC_URL") or POLYGON_RPC
+    onchain_usdc_address = (
+        os.environ.get("ONCHAIN_TRADING_USDC_E_ADDRESS")
+        or os.environ.get("ONCHAIN_USDC_ADDRESS")
+        or DEFAULT_USDC_ADDRESS
+    )
+    onchain_usdc_decimals = int(
+        os.environ.get("ONCHAIN_TRADING_USDC_E_DECIMALS")
+        or os.environ.get("ONCHAIN_USDC_DECIMALS")
+        or str(DEFAULT_USDC_DECIMALS)
+    )
+    onchain_usdc, onchain_pol = _get_onchain_balances(
+        wallet_address,
+        rpc_url=onchain_rpc_url,
+        usdc_address=onchain_usdc_address,
+        usdc_decimals=onchain_usdc_decimals,
+    )
 
     return Balances(
         wallet_address=wallet_address,
