@@ -4,9 +4,9 @@ Prediction market signal producer and consumer system. The producer generates tr
 
 ## Judges
 
-Kite AI: [x402 code](https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/payment.py#L50https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/payment.py#L50) for buying signals
+Kite AI: [x402 code](https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/payment.py#L50https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/payment.py#L50) used for paying for signals and managing producer and consumer reputations though x402
 
-0g: [LLM](https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/llm_clients.py#L99) trading decisions
+0g: [LLM](https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/llm_clients.py#L99) dynamtic pricing for bids
 
 Fuuuuterllama: [AI driven websocket substrate ingestion](https://github.com/ethdenver-2026/polymaxx/blob/180f3f380eac84756ce55265b6f2c82a7ceb48a0/consumer/signal_consumer/ws_ingestion.py#L1)
 ## Prerequisites
