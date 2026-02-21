@@ -114,11 +114,6 @@ export interface PaperPosition {
   received_at: number;
 }
 
-export interface GenerateSignalResponse {
-  ok: boolean;
-  signals_found: number;
-  errors: string[];
-}
 
 export interface AuctionEvent {
   id: number;

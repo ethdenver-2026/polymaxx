@@ -33,24 +33,35 @@ dependencies = [
 
     # CLI
     "typer>=0.12.0",
+
+    # Trading
+    "py-clob-client>=0.34.5",
+
+    # TSA signal generation
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "xgboost>=2.0.0",
+    "scikit-learn>=1.3.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=4.9.0",
+    "pyarrow>=14.0.0",
+    "pyyaml>=6.0.0",
 ]
 
 [project.optional-dependencies]
+backtest = [
+    # Only needed for backtesting with GRIB files
+    "cfgrib>=0.9.10",
+    "xarray>=2024.1.0",
+]
+
+[dependency-groups]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-timeout>=2.4.0",
     "ruff>=0.4.0",
     "mypy>=1.10.0",
-]
-live = [
-    # Only needed for live trading
-    "py-clob-client>=0.34.5",
-]
-backtest = [
-    # Only needed for backtesting with GRIB files
-    "cfgrib>=0.9.10",
-    "xarray>=2024.1.0",
 ]
 
 [project.scripts]

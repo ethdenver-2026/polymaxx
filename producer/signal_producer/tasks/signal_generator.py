@@ -6,6 +6,7 @@ Broadcasts signal preview messages for the marketplace auction protocol.
 
 import asyncio
 import json
+import random
 import uuid
 from datetime import datetime, timedelta, UTC
 from typing import TYPE_CHECKING, Any
@@ -319,7 +320,9 @@ class SignalGeneratorTask:
 
         events = self._registry.get_active_events()
 
-        for event in events:
+        for i, event in enumerate(events):
+            if i > 0:
+                await asyncio.sleep(2)  # Rate-limit Open-Meteo requests
             signals = await self._generate_for_event(event)
             all_signals.extend(signals)
 
@@ -354,7 +357,8 @@ class SignalGeneratorTask:
 
         while self._running:
             await self._generate_once()
-            await asyncio.sleep(self._forecast_interval)
+            jitter = random.uniform(0, self._forecast_interval * 0.2)
+            await asyncio.sleep(self._forecast_interval + jitter)
 
     def stop(self) -> None:
         """Stop the signal generator."""

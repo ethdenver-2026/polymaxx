@@ -17,13 +17,11 @@ from starlette.responses import StreamingResponse
 
 from pydantic import BaseModel
 
-import httpx
 import structlog
 
 from .balances import get_balances
 from .config import get_settings, get_trading_mode, set_trading_mode
-from .db import get_auction_events, log_auction_event, get_paper_positions, get_signals, log_signal, subscribe, unsubscribe
-from .signal_generator import generate_signal
+from .db import get_auction_events, get_paper_positions, get_signals, subscribe, unsubscribe
 
 logger = structlog.get_logger()
 
@@ -129,123 +127,9 @@ def auctions(limit: int = 100):
     return get_auction_events(limit=limit)
 
 
-@app.post("/api/auctions/smoke")
-def auctions_smoke():
-    """Seed sample auction lifecycle events for UI testing (paper mode only)."""
-    if get_trading_mode() != "paper":
-        return {"ok": False, "error": "Smoke test only available in paper mode"}
-
-    import uuid
-    import time
-
-    auction_id = f"auction-smoke-{uuid.uuid4().hex[:8]}"
-    consumer = "did:kite:paper/consumer-a"
-    producer = "did:kite:paper/producer-1"
-    event_id = f"event-smoke-{uuid.uuid4().hex[:6]}"
-    now = time.time()
-
-    # Simulate a full auction lifecycle
-    events = [
-        {"outcome": "bid_submitted", "bid_amount": 8.50},
-        {"outcome": "won_offer", "winner_did": consumer, "winning_paid_amount": 8.50},
-        {"outcome": "payment_succeeds", "winner_did": consumer, "winning_paid_amount": 8.50,
-         "payment_url": "https://example.com/pay/mock"},
-    ]
-    for i, ev in enumerate(events):
-        log_auction_event(
-            auction_id=auction_id,
-            consumer_did=consumer,
-            producer_did=producer,
-            event_id=event_id,
-            bid_amount=ev.get("bid_amount"),
-            outcome=ev["outcome"],
-            winner_did=ev.get("winner_did"),
-            winning_paid_amount=ev.get("winning_paid_amount"),
-            payment_url=ev.get("payment_url"),
-            raw_message={"smoke": True, "step": i},
-        )
-
-    # Also add a second auction that was lost
-    auction_id_2 = f"auction-smoke-{uuid.uuid4().hex[:8]}"
-    event_id_2 = f"event-smoke-{uuid.uuid4().hex[:6]}"
-    for i, ev in enumerate([
-        {"outcome": "bid_submitted", "bid_amount": 5.00},
-        {"outcome": "auction_loss", "winner_did": "did:kite:paper/consumer-b"},
-    ]):
-        log_auction_event(
-            auction_id=auction_id_2,
-            consumer_did=consumer,
-            producer_did=producer,
-            event_id=event_id_2,
-            bid_amount=ev.get("bid_amount"),
-            outcome=ev["outcome"],
-            winner_did=ev.get("winner_did"),
-            raw_message={"smoke": True, "step": i},
-        )
-
-    return {"ok": True, "auctions_created": 2, "events_created": 5}
-
 
 @app.get("/api/paper-positions")
 def paper_positions():
     return get_paper_positions()
 
 
-class GenerateSignalRequest(BaseModel):
-    cities: list[str] | None = None
-
-
-@app.post("/api/generate-signal")
-async def generate_signal_endpoint(body: GenerateSignalRequest | None = None):
-    """Generate signals — tries producer first, falls back to local generator."""
-    cities = body.cities if body and body.cities else ["nyc", "chicago"]
-
-    # --- Try producer first ---
-    s = get_settings()
-    producer_http = s.producer_ws_url.replace("ws://", "http://").replace("wss://", "https://")
-    producer_http = producer_http.split("/ws/")[0]
-
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{producer_http}/run-once",
-                params={"cities": ",".join(cities)},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        return {
-            "ok": True,
-            "signals_found": data.get("signals_found", 0),
-            "source": "producer",
-            "errors": [],
-        }
-    except (httpx.ConnectError, httpx.HTTPStatusError):
-        logger.info("Producer unreachable, falling back to local generator", cities=cities)
-
-    # --- Fallback: local signal generator per city ---
-    total_logged = 0
-    all_errors: list[str] = []
-
-    for city in cities:
-        try:
-            result = await generate_signal(city_slug=city)
-        except Exception as exc:
-            all_errors.append(f"{city}:{exc}")
-            continue
-
-        signal_data = result["signal_data"]
-        response = result["response"]
-
-        # Always log so every attempt shows in the signal feed
-        log_signal(signal_data, response)
-        total_logged += 1
-
-        if response.get("errors"):
-            all_errors.extend(f"{city}:{e}" for e in response["errors"])
-
-    return {
-        "ok": total_logged > 0,
-        "signals_found": total_logged,
-        "source": "local",
-        "errors": all_errors,
-    }

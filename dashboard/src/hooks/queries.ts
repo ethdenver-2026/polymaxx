@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getPositions, getPortfolioValue, getActivity } from "@/api/polymarket";
-import { getBalances, getSignalLog, getConfig, generateSignal, setTradingMode, getPaperPositions } from "@/api/consumer";
+import { getBalances, getSignalLog, getConfig, setTradingMode, getPaperPositions } from "@/api/consumer";
 
 export function useConfig() {
   return useQuery({
@@ -53,16 +53,6 @@ export function useActivity(wallet: string | undefined) {
   });
 }
 
-export function useGenerateSignal() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (cities?: string[]) => generateSignal(cities),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["signals"] });
-      qc.invalidateQueries({ queryKey: ["paperPositions"] });
-    },
-  });
-}
 
 export function useSetTradingMode() {
   const qc = useQueryClient();

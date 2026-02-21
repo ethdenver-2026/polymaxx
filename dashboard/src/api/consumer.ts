@@ -1,4 +1,4 @@
-import type { AuctionEvent, Balances, ConsumerSignal, ConsumerConfig, GenerateSignalResponse, PaperPosition } from "./types";
+import type { AuctionEvent, Balances, ConsumerSignal, ConsumerConfig, PaperPosition } from "./types";
 
 export async function getBalances(): Promise<Balances> {
   const res = await fetch("/api/balances");
@@ -20,14 +20,6 @@ export async function getHealth(): Promise<{ status: string }> {
   return res.json();
 }
 
-export async function generateSignal(cities?: string[]): Promise<GenerateSignalResponse> {
-  const res = await fetch("/api/generate-signal", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(cities ? { cities } : {}),
-  });
-  return res.json();
-}
 
 export async function setTradingMode(mode: string): Promise<{ ok: boolean; trading_mode?: string; error?: string }> {
   const res = await fetch("/api/config/trading-mode", {
