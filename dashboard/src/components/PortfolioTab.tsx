@@ -84,15 +84,17 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
   // Paper-mode aggregates
   const paperTotalNotional = paperPositions?.reduce((s, p) => s + (p.size_usd ?? 0), 0) ?? 0;
   const paperPositionCount = paperPositions?.length ?? 0;
+  const paperOpenTrades = trades?.filter((t) => t.trade_type === "paper" && t.status === "open") ?? [];
+  const paperUnrealizedPnl = paperOpenTrades.reduce((s, t) => s + (t.unrealized_pnl ?? 0), 0);
 
   // Pick values based on mode
   const displayPortfolioValue = isLive ? portfolioValue : (config?.bankroll_usdc ?? 0);
-  const displayPnl = isLive ? pnl : 0;
-  const displayPnlPct = isLive ? pnlPct : 0;
+  const displayPnl = isLive ? pnl : paperUnrealizedPnl;
+  const displayPnlPct = isLive ? pnlPct : (config?.bankroll_usdc ? paperUnrealizedPnl / config.bankroll_usdc : 0);
   const displayInPositions = isLive ? totalPositionValue : paperTotalNotional;
   const displayFreeCash = isLive ? clobBalance : (config?.bankroll_usdc ?? 0) - paperTotalNotional;
   const displayOpenCount = isLive ? openCount : paperPositionCount;
-  const displayPositionPnl = isLive ? totalPositionPnl : 0;
+  const displayPositionPnl = isLive ? totalPositionPnl : paperUnrealizedPnl;
 
   return (
     <div className="space-y-4">
@@ -298,6 +300,8 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
                         <th className="text-right px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Size</th>
                         <th className="text-right px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Entry</th>
                         <th className="text-right px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Edge</th>
+                        <th className="text-right px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Cur</th>
+                        <th className="text-right px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">P&L</th>
                         <th className="text-center px-2 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Status</th>
                         <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Time</th>
                       </tr>
@@ -329,6 +333,20 @@ export function PortfolioTab({ wallet }: PortfolioTabProps) {
                               edge > 0 ? "text-signal-green" : "text-muted-foreground"
                             }`}>
                               {(edge * 100).toFixed(1)}%
+                            </td>
+                            <td className="px-2 py-2 text-right num text-muted-foreground">
+                              {t.current_price != null ? `${(t.current_price * 100).toFixed(1)}¢` : "---"}
+                            </td>
+                            <td className={`px-2 py-2 text-right font-semibold num ${
+                              t.unrealized_pnl != null && t.unrealized_pnl > 0
+                                ? "text-signal-green"
+                                : t.unrealized_pnl != null && t.unrealized_pnl < 0
+                                  ? "text-signal-red"
+                                  : "text-muted-foreground"
+                            }`}>
+                              {t.unrealized_pnl != null
+                                ? `${t.unrealized_pnl >= 0 ? "+" : ""}$${t.unrealized_pnl.toFixed(2)}`
+                                : "---"}
                             </td>
                             <td className="px-2 py-2 text-center">
                               <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] uppercase tracking-wider font-semibold ${
