@@ -67,6 +67,36 @@ Run checks only for the project(s) you changed.
 - Favor strong typing and reliability over novelty
 - Consider runtime cost and operational complexity before adding dependencies
 
+## Terraform Workflow
+
+### Terraform Run Discipline (`terraform/`)
+- Before any Terraform command, clear stale AWS session env vars:
+  - `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_CREDENTIAL_EXPIRATION`
+- Refresh credentials from the default profile for the current shell:
+  - `eval "$(aws configure export-credentials --profile default --format env)"`
+- Verify auth before `plan`/`apply`:
+  - `aws sts get-caller-identity`
+- Always run Terraform from `terraform/` directory.
+
+### Handling Pre-Existing AWS Secrets
+- If `terraform apply` fails with `ResourceExistsException` for these secrets:
+  - `signal-market/github-pat`
+  - `signal-market/env-file`
+- Import the existing secrets into Terraform state before retrying:
+  - `terraform import aws_secretsmanager_secret.github_pat signal-market/github-pat`
+  - `terraform import aws_secretsmanager_secret.env_file signal-market/env-file`
+- Re-run `terraform plan` and `terraform apply` only after imports succeed.
+
+### Terraform Lint and Validation
+- Required checks before PR:
+  - `terraform fmt -recursive`
+  - `terraform fmt -check -recursive`
+  - `terraform validate`
+- Optional static lint (recommended when available):
+  - `tflint --init`
+  - `tflint`
+- Include Terraform command output in PR testing notes when infra changes are present.
+
 ## Documentation & Research
 
 ### MCP and Documentation Usage

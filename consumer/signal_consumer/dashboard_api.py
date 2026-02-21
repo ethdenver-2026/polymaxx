@@ -95,13 +95,19 @@ def config():
     else:
         bankroll = s.bankroll_usdc
 
+    wallet_address = (
+        s.trading_wallet_address
+        or os.environ.get("TRADING_WALLET_ADDRESS", "")
+        or os.environ.get("POLYMARKET_WALLET_ADDRESS", "")
+    )
+
     return {
         "trading_mode": mode,
         "bankroll_usdc": bankroll,
         "max_position_usd": s.max_position_usd,
         "kelly_fraction": s.kelly_fraction,
         "edge_threshold_pct": s.edge_threshold_pct,
-        "wallet_address": os.environ.get("POLYMARKET_WALLET_ADDRESS", ""),
+        "wallet_address": wallet_address,
     }
 
 
