@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://signal-market.local/schemas/signal-channel.schema.json",
+  "title": "Signal Channel Messages",
+  "description": "Messages delivered on producer /ws/signals.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SignalPreviewMessage"
+    },
+    {
+      "$ref": "#/$defs/SignalMessage"
+    }
+  ],
+  "$defs": {
+    "IsoDateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "PreviewPolymarketInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exchange",
+        "event_id",
+        "edge",
+        "price_timestamp"
+      ],
+      "properties": {
+        "exchange": {
+          "const": "polymarket"
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "edge": {
+          "type": "number"
+        },
+        "price_timestamp": {
+          "$ref": "#/$defs/IsoDateTime"
+        }
+      }
+    },
+    "SignalPreviewMessage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "sent_at",
+        "published_at",
+        "signal_type",
+        "producer_did",
+        "auction_id",
+        "auction_end_utc",
+        "last_price_paid",
+        "model_probability",
+        "confidence",
+        "exchanges"
+      ],
+      "properties": {
+        "type": {
+          "const": "SignalPreviewMessage"
+        },
+        "version": {
+          "const": 1
+        },
+        "sent_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        },
+        "published_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        },
+        "signal_type": {
+          "const": "weather"
+        },
+        "producer_did": {
+          "type": "string",
+          "minLength": 1
+        },
+        "auction_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "auction_end_utc": {
+          "$ref": "#/$defs/IsoDateTime"
+        },
+        "last_price_paid": {
+          "type": "number"
+        },
+        "model_probability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "exchanges": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/PreviewPolymarketInfo"
+          }
+        }
+      }
+    },
+    "SignalExchangeFull": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "exchange",
+        "event_id",
+        "token_id",
+        "side",
+        "market_description",
+        "resolution_source",
+        "market_price",
+        "edge",
+        "price_timestamp"
+      ],
+      "properties": {
+        "exchange": {
+          "const": "polymarket"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "token_id": {
+          "type": "string"
+        },
+        "side": {
+          "type": "string",
+          "enum": [
+            "yes",
+            "no"
+          ]
+        },
+        "market_description": {
+          "type": "string"
+        },
+        "resolution_source": {
+          "type": "string"
+        },
+        "market_price": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "edge": {
+          "type": "number"
+        },
+        "price_timestamp": {
+          "type": "string"
+        }
+      }
+    },
+    "SignalMessagePayload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "signal_type",
+        "model_probability",
+        "confidence",
+        "forecast_source",
+        "forecast_time",
+        "metadata",
+        "exchanges"
+      ],
+      "properties": {
+        "signal_type": {
+          "const": "weather"
+        },
+        "model_probability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "forecast_source": {
+          "type": "string",
+          "enum": [
+            "open_meteo",
+            "noaa"
+          ]
+        },
+        "forecast_time": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "exchanges": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/SignalExchangeFull"
+          }
+        }
+      }
+    },
+    "SignalMessage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "signal",
+        "sent_at"
+      ],
+      "properties": {
+        "type": {
+          "const": "SignalMessage"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string"
+        },
+        "signal": {
+          "$ref": "#/$defs/SignalMessagePayload"
+        },
+        "sent_at": {
+          "$ref": "#/$defs/IsoDateTime"
+        }
+      }
+    }
+  }
+}

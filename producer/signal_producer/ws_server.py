@@ -6,7 +6,7 @@ import structlog
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 
 from .main import run_once
-from .publishing.websocket import broadcaster
+from .publishing.websocket_signal_broadcaster import broadcaster
 
 logger = structlog.get_logger()
 app = FastAPI(title="Signal Producer WebSocket Server", version="0.1.0")
@@ -30,15 +30,31 @@ async def run_cycle(cities: str | None = None) -> dict:
 
 @app.websocket("/ws/signals")
 async def signals_websocket(websocket: WebSocket) -> None:
-    await broadcaster.connect(websocket)
+    consumer_did = websocket.query_params.get("consumer_did") or f"anon-signal-{id(websocket)}"
+    await broadcaster.connect(websocket, consumer_did=consumer_did)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        await broadcaster.disconnect(websocket)
+        await broadcaster.disconnect(consumer_did=consumer_did)
     except Exception as exc:
         logger.exception("websocket connection error", error=str(exc))
-        await broadcaster.disconnect(websocket)
+        await broadcaster.disconnect(consumer_did=consumer_did)
+
+
+@app.websocket("/ws/bids")
+async def bids_websocket(websocket: WebSocket) -> None:
+    consumer_did = websocket.query_params.get("consumer_did") or f"anon-bid-{id(websocket)}"
+    await broadcaster.connect_bid(websocket, consumer_did=consumer_did)
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            await broadcaster.handle_bid_payload(payload, consumer_did=consumer_did)
+    except WebSocketDisconnect:
+        await broadcaster.disconnect_bid(consumer_did=consumer_did)
+    except Exception as exc:
+        logger.exception("bid websocket connection error", error=str(exc), consumer_did=consumer_did)
+        await broadcaster.disconnect_bid(consumer_did=consumer_did)
 
 
 def run_signal_server(host: str = "0.0.0.0", port: int = 8000) -> None:

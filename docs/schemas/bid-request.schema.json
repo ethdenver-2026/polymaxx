@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://signal-market.local/schemas/bid-request.schema.json",
+  "title": "Bid Channel Requests",
+  "description": "Messages sent by consumer to producer on /ws/bids.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/AuctionBidMessage"
+    },
+    {
+      "$ref": "#/$defs/AuctionPaymentResult"
+    }
+  ],
+  "$defs": {
+    "AuctionBidMessage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "consumer_did",
+        "wallet_address",
+        "bid_amount"
+      ],
+      "properties": {
+        "type": {
+          "const": "AuctionBidMessage"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consumer_did": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wallet_address": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bid_amount": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "AuctionPaymentResult": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "version",
+        "auction_id",
+        "consumer_did",
+        "payment_success"
+      ],
+      "properties": {
+        "type": {
+          "const": "AuctionPaymentResult"
+        },
+        "version": {
+          "const": 1
+        },
+        "auction_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consumer_did": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payment_success": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

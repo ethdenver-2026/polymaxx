@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Literal, TypedDict
 
 
@@ -31,6 +31,12 @@ class ProducerSignalPreview:
     # Type discriminator
     signal_type: SignalType
 
+    # Identity and auction envelope
+    producer_did: str
+    auction_id: str
+    auction_end_utc: str  # ISO timestamp
+    last_price_paid: float
+
     # Core prediction (exchange-agnostic)
     model_probability: float
     confidence: float
@@ -41,3 +47,37 @@ class ProducerSignalPreview:
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
         return asdict(self)
+
+
+SignalPreviewMessage = ProducerSignalPreview
+
+
+@dataclass
+class AuctionBidMessage:
+    """Bid message sent by a consumer for a previewed auction."""
+
+    auction_id: str
+    consumer_did: str
+    bid_amount: float
+    wallet_address: str
+
+    def to_dict(self) -> dict:
+        payload = asdict(self)
+        payload["type"] = "AuctionBidMessage"
+        payload["version"] = 1
+        return payload
+
+
+@dataclass
+class AuctionBidRejected:
+    """Rejected bid response emitted by producer."""
+
+    auction_id: str
+    consumer_did: str
+    reason: str
+
+    def to_dict(self) -> dict:
+        payload = asdict(self)
+        payload["type"] = "AuctionBidRejected"
+        payload["version"] = 1
+        return payload

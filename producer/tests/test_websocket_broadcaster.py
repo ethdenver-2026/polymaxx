@@ -1,7 +1,9 @@
 """Tests for WebSocket broadcaster."""
 
+import asyncio
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from signal_producer.publishing.websocket import SignalBroadcaster
 from signal_producer.signals.types import ProducerSignal, WeatherMetadata, PolymarketInfo
@@ -67,16 +69,18 @@ class TestSignalBroadcaster:
         mock_ws.accept = AsyncMock()
         mock_ws.send_json = AsyncMock()
 
-        await broadcaster.connect(mock_ws)
+        await broadcaster.connect(mock_ws, consumer_did="did:kite:test/consumer-a")
         await broadcaster.broadcast_producer_signal(sample_producer_signal)
 
         # Should have sent the signal
         mock_ws.send_json.assert_called_once()
         payload = mock_ws.send_json.call_args[0][0]
 
+        assert payload["type"] == "SignalPreviewMessage"
         assert payload["signal_type"] == "weather"
-        assert payload["model_probability"] == 0.65
-        assert payload["metadata"]["city"] == "nyc"
+        assert payload["producer_did"].startswith("did:kite:")
+        assert payload["auction_id"]
+        assert payload["auction_end_utc"]
         assert "published_at" in payload
 
     @pytest.mark.asyncio
@@ -85,8 +89,116 @@ class TestSignalBroadcaster:
         mock_ws = AsyncMock()
         mock_ws.accept = AsyncMock()
 
-        await broadcaster.connect(mock_ws)
-        assert len(broadcaster._connections) == 1
+        await broadcaster.connect(mock_ws, consumer_did="did:kite:test/consumer-a")
+        assert len(broadcaster._signal_connections) == 1
 
-        await broadcaster.disconnect(mock_ws)
-        assert len(broadcaster._connections) == 0
+        await broadcaster.disconnect("did:kite:test/consumer-a")
+        assert len(broadcaster._signal_connections) == 0
+
+    @pytest.mark.asyncio
+    async def test_late_bid_rejected(self, broadcaster, sample_producer_signal):
+        signal_ws = AsyncMock()
+        signal_ws.accept = AsyncMock()
+        signal_ws.send_json = AsyncMock()
+        bid_ws = AsyncMock()
+        bid_ws.accept = AsyncMock()
+        bid_ws.send_json = AsyncMock()
+
+        await broadcaster.connect(signal_ws, consumer_did="did:kite:test/consumer-a")
+        await broadcaster.connect_bid(bid_ws, consumer_did="did:kite:test/consumer-a")
+        await broadcaster.broadcast_producer_signal(sample_producer_signal)
+
+        preview_payload = signal_ws.send_json.call_args_list[0][0][0]
+        auction_id = preview_payload["auction_id"]
+
+        # Force-close via elapsed path before sending bid.
+        await broadcaster._close_auction(auction_id, "auction_elapsed")
+        await broadcaster.handle_bid_payload(
+            {
+                "type": "AuctionBidMessage",
+                "auction_id": auction_id,
+                "consumer_did": "did:kite:test/consumer-a",
+                "bid_amount": 3.5,
+                "wallet_address": "0xabc",
+            },
+            consumer_did="did:kite:test/consumer-a",
+        )
+        last_payload = bid_ws.send_json.call_args_list[-1][0][0]
+        assert last_payload["type"] == "AuctionBidRejected"
+
+    @pytest.mark.asyncio
+    async def test_ranked_payment_fallback_and_winner_delivery(self, broadcaster, sample_producer_signal):
+        signal_ws_a = AsyncMock()
+        signal_ws_a.accept = AsyncMock()
+        signal_ws_a.send_json = AsyncMock()
+        signal_ws_b = AsyncMock()
+        signal_ws_b.accept = AsyncMock()
+        signal_ws_b.send_json = AsyncMock()
+        bid_ws_a = AsyncMock()
+        bid_ws_a.accept = AsyncMock()
+        bid_ws_a.send_json = AsyncMock()
+        bid_ws_b = AsyncMock()
+        bid_ws_b.accept = AsyncMock()
+        bid_ws_b.send_json = AsyncMock()
+
+        did_a = "did:kite:test/consumer-a"
+        did_b = "did:kite:test/consumer-b"
+        await broadcaster.connect(signal_ws_a, consumer_did=did_a)
+        await broadcaster.connect(signal_ws_b, consumer_did=did_b)
+        await broadcaster.connect_bid(bid_ws_a, consumer_did=did_a)
+        await broadcaster.connect_bid(bid_ws_b, consumer_did=did_b)
+        await broadcaster.broadcast_producer_signal(sample_producer_signal)
+        preview = signal_ws_a.send_json.call_args_list[0][0][0]
+        auction_id = preview["auction_id"]
+
+        await broadcaster.handle_bid_payload(
+            {
+                "type": "AuctionBidMessage",
+                "auction_id": auction_id,
+                "consumer_did": did_a,
+                "bid_amount": 10.0,
+                "wallet_address": "0xa",
+            },
+            consumer_did=did_a,
+        )
+        await broadcaster.handle_bid_payload(
+            {
+                "type": "AuctionBidMessage",
+                "auction_id": auction_id,
+                "consumer_did": did_b,
+                "bid_amount": 6.0,
+                "wallet_address": "0xb",
+            },
+            consumer_did=did_b,
+        )
+        await asyncio.sleep(0.05)
+        assert any(call[0][0]["type"] == "AuctionWinNotice" for call in bid_ws_a.send_json.call_args_list)
+
+        await broadcaster.handle_bid_payload(
+            {
+                "type": "AuctionPaymentResult",
+                "auction_id": auction_id,
+                "consumer_did": did_a,
+                "payment_success": False,
+            },
+            consumer_did=did_a,
+        )
+        await asyncio.sleep(0.05)
+        assert any(call[0][0]["type"] == "AuctionWinNotice" for call in bid_ws_b.send_json.call_args_list)
+
+        await broadcaster.handle_bid_payload(
+            {
+                "type": "AuctionPaymentResult",
+                "auction_id": auction_id,
+                "consumer_did": did_b,
+                "payment_success": True,
+            },
+            consumer_did=did_b,
+        )
+        await asyncio.sleep(0.05)
+        assert any(
+            call[0][0]["type"] == "AuctionPaymentStatus" and call[0][0]["status"] == "PAYMENT_SUCCEEDS"
+            for call in bid_ws_b.send_json.call_args_list
+        )
+        assert any(call[0][0]["type"] == "SignalMessage" for call in bid_ws_b.send_json.call_args_list)
+        assert any(call[0][0]["type"] == "AuctionLossNotice" for call in bid_ws_a.send_json.call_args_list)

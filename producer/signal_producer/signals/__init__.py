@@ -1,14 +1,24 @@
 """Signal types for the producer."""
 
 from .types import (
-    WeatherMetadata,
-    PolymarketInfo,
-    ProducerSignal,
+    AuctionBidMessage,
+    AuctionBidRejected,
     ForecastSource,
+    PolymarketInfo,
+    PreviewPolymarketInfo,
+    ProducerSignal,
+    ProducerSignalPreview,
     SignalType,
+    SignalPreviewMessage,
+    WeatherMetadata,
 )
 
 __all__ = [
+    "AuctionBidMessage",
+    "AuctionBidRejected",
+    "PreviewPolymarketInfo",
+    "ProducerSignalPreview",
+    "SignalPreviewMessage",
     "WeatherMetadata",
     "PolymarketInfo",
     "ProducerSignal",

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from collections import deque
 
 from signal_consumer.config import Settings
-from signal_consumer.ws_ingestion import handle_raw_ws_message
+from signal_consumer.ws_ingestion import _submit_bid_for_preview, handle_raw_ws_message
 
 
 def _settings(**overrides: object) -> Settings:
@@ -54,6 +56,7 @@ def test_handle_raw_ws_message_logs_success(monkeypatch):
 
     monkeypatch.setattr("signal_consumer.ws_ingestion.process_signal_payload", _fake_process)
     monkeypatch.setattr("signal_consumer.ws_ingestion.log_signal", _fake_log)
+    monkeypatch.setattr("signal_consumer.ws_ingestion.log_auction_event", lambda **_: None)
 
     response = handle_raw_ws_message(json.dumps(payload), _settings())
     assert response["action"] == "simulated"
@@ -65,3 +68,44 @@ def test_handle_raw_ws_message_returns_error_for_invalid_json():
     response = handle_raw_ws_message("{bad-json", _settings())
     assert response["action"] == "error"
     assert response["errors"]
+
+
+def test_submit_bid_preview_handles_rejection(monkeypatch):
+    preview_payload = {
+        "type": "SignalPreviewMessage",
+        "auction_id": "auction-1",
+    }
+    outbound_messages: list[dict] = []
+
+    class _FakeBidSocket:
+        def __init__(self):
+            self._responses = deque(
+                [
+                    json.dumps({"type": "AuctionBidAccepted", "auction_id": "auction-1"}),
+                    json.dumps({"type": "AuctionBidRejected", "auction_id": "auction-1", "reason": "auction_elapsed"}),
+                ]
+            )
+
+        async def send(self, message: str):
+            outbound_messages.append(json.loads(message))
+
+        async def recv(self) -> str:
+            return self._responses.popleft()
+
+    class _FakeConnectContext:
+        async def __aenter__(self):
+            return _FakeBidSocket()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("signal_consumer.ws_ingestion.websockets.connect", lambda _: _FakeConnectContext())
+    monkeypatch.setattr("signal_consumer.ws_ingestion.log_auction_event", lambda **_: None)
+    settings = _settings(
+        consumer_did="did:kite:test/consumer-a",
+        consumer_wallet_address="0xabc",
+        consumer_default_bid_amount=2.5,
+    )
+    result = asyncio.run(_submit_bid_for_preview(preview_payload, settings))
+    assert result["action"] == "AuctionBidRejected"
+    assert outbound_messages[0]["type"] == "AuctionBidMessage"
